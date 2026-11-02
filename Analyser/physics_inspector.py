@@ -168,9 +168,13 @@ class PhysicsInspector:
             ))
 
     def _check_gravity_consistency(self):
-        # Scan freefall segments
+        # Scan freefall segments across all dynamic bodies
+        exp_g = abs(self.expected_gravity)
+        is_screen_space = (exp_g > 50.0)
+        candidates = []
+
         for b_id, history in self.recorder.body_histories.items():
-            if len(history) < 15:
+            if len(history) < 10:
                 continue
 
             for i in range(2, len(history) - 2):
@@ -178,20 +182,42 @@ class PhysicsInspector:
                 t2, s2 = history[i + 2]
                 dt = t2 - t1
 
-                if dt > 0.02 and abs(s1.vx) < 5.0 and s1.vy > 50.0 and s2.vy > s1.vy:
-                    accel_y = (s2.vy - s1.vy) / dt
-                    err = abs(accel_y - self.expected_gravity)
-                    if err > self.expected_gravity * 0.35 and err > 150.0:
-                        self.anomalies.append(Anomaly(
-                            code="WARN_GRAVITY_ACCEL_MISMATCH",
-                            severity=Anomaly.SEV_WARNING,
-                            title="Gravity Acceleration Mismatch",
-                            description=(
-                                f"Observed vertical acceleration {accel_y:.1f}px/s² deviates from expected {self.expected_gravity:.1f}px/s². "
-                                "Check scaling factor PPM or air drag damping."
-                            ),
-                            timestamp=t1,
-                            metric_value=accel_y,
-                            threshold=self.expected_gravity
-                        ))
-                        return
+                if dt < 0.02:
+                    continue
+
+                # Measure horizontal acceleration to filter out collisions/impacts
+                accel_x = abs(s2.vx - s1.vx) / dt
+                accel_z = abs(s2.vz - s1.vz) / dt
+
+                if is_screen_space:
+                    # 2D Screen Space (+Y is downward, no collision if horizontal acceleration is small)
+                    if accel_x < 35.0 and s2.vy > s1.vy:
+                        accel_y = (s2.vy - s1.vy) / dt
+                        candidates.append((accel_y, t1))
+                else:
+                    # 3D Metric Space (-Y is downward, no collision if horizontal acceleration is small)
+                    if accel_x < 1.5 and accel_z < 1.5 and s2.vy < s1.vy:
+                        accel_y = abs(s2.vy - s1.vy) / dt
+                        candidates.append((accel_y, t1))
+
+        if not candidates:
+            return
+
+        # Find candidate closest to expected gravity (least affected by drag or support normal forces)
+        best_accel, best_t = min(candidates, key=lambda c: abs(c[0] - exp_g))
+        err = abs(best_accel - exp_g)
+
+        if err > exp_g * 0.35 and err > (150.0 if is_screen_space else 2.5):
+            self.anomalies.append(Anomaly(
+                code="WARN_GRAVITY_ACCEL_MISMATCH",
+                severity=Anomaly.SEV_WARNING,
+                title="Gravity Acceleration Mismatch",
+                description=(
+                    f"Observed vertical acceleration {best_accel:.1f}{'px/s²' if is_screen_space else 'm/s²'} "
+                    f"deviates from expected {exp_g:.1f}{'px/s²' if is_screen_space else 'm/s²'}. "
+                    "Check scaling factor PPM or air drag damping."
+                ),
+                timestamp=best_t,
+                metric_value=best_accel,
+                threshold=exp_g
+            ))
