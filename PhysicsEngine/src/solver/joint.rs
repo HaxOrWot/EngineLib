@@ -37,8 +37,8 @@ impl DistanceJoint {
         }
     }
 
-    /// Solves joint distance constraint and applies positional & velocity damping corrections
-    pub fn solve(&self, body_a: &mut RigidBody3D, body_b: &mut RigidBody3D) {
+    /// Solves joint distance constraint via XPBD position projection and velocity coupling
+    pub fn solve(&self, body_a: &mut RigidBody3D, body_b: &mut RigidBody3D, _dt: f32) {
         let total_inv_mass = body_a.inverse_mass + body_b.inverse_mass;
         if total_inv_mass <= 0.0 {
             return;
@@ -64,15 +64,23 @@ impl DistanceJoint {
         body_a.position -= correction * body_a.inverse_mass;
         body_b.position += correction * body_b.inverse_mass;
 
-        // 2. Velocity damping along constraint axis (prevents elastic oscillation)
+        // 2. Velocity projection: eliminate separating/compressing velocity along constraint axis
         let rel_vel = body_a.velocity - body_b.velocity;
         let vel_along_axis = rel_vel.dot(normal);
 
-        let damping_impulse = (vel_along_axis / total_inv_mass) * self.damping;
-        let damping_vec = normal * damping_impulse;
+        let vel_correction = (vel_along_axis / total_inv_mass) * self.stiffness;
+        let vel_impulse = normal * vel_correction;
 
-        body_a.velocity -= damping_vec * body_a.inverse_mass;
-        body_b.velocity += damping_vec * body_b.inverse_mass;
+        body_a.velocity -= vel_impulse * body_a.inverse_mass;
+        body_b.velocity += vel_impulse * body_b.inverse_mass;
+
+        // 3. Muscle damping along constraint axis (prevents elastic oscillation)
+        if self.damping > 0.0 {
+            let damp_factor = (self.damping * 0.5).clamp(0.0, 1.0);
+            let damp_impulse = normal * ((vel_along_axis / total_inv_mass) * damp_factor);
+            body_a.velocity -= damp_impulse * body_a.inverse_mass;
+            body_b.velocity += damp_impulse * body_b.inverse_mass;
+        }
 
         // Auto-wake connected limbs under tension or motion
         if error.abs() > 0.02 || vel_along_axis.abs() > 0.05 {

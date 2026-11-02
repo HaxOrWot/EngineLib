@@ -203,6 +203,41 @@ pub unsafe extern "C" fn get_body_position(id: u32, out_pos: *mut Vector3D) -> b
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn get_body_velocity(id: u32, out_vel: *mut Vector3D) -> bool {
+    if out_vel.is_null() {
+        return false;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            if let Some(body) = world.get_body(id) {
+                std::ptr::write(out_vel, body.velocity);
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_velocity(id: u32, vx: f32, vy: f32, vz: f32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.velocity = Vector3D::new(vx, vy, vz);
+                body.wake();
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+
+#[no_mangle]
 pub extern "C" fn apply_force(id: u32, fx: f32, fy: f32, fz: f32) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         with_world_mut(|world| {
@@ -310,3 +345,22 @@ pub unsafe extern "C" fn sync_all_transforms(
     }));
     result.unwrap_or(false)
 }
+
+#[no_mangle]
+pub extern "C" fn disable_collision_pair(body_a: u32, body_b: u32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.disable_collision_pair(body_a, body_b);
+        });
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn enable_collision_pair(body_a: u32, body_b: u32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.enable_collision_pair(body_a, body_b);
+        });
+    }));
+}
+

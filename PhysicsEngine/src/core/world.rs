@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::collision::broadphase::SpatialHash;
 use crate::collision::narrowphase::Narrowphase;
 use crate::core::body::{RigidBody3D, ShapeType};
@@ -11,6 +11,7 @@ use crate::solver::joint::DistanceJoint;
 pub struct PhysicsWorld {
     pub bodies: HashMap<u32, RigidBody3D>,
     pub joints: HashMap<u32, DistanceJoint>,
+    pub disabled_collision_pairs: HashSet<(u32, u32)>,
     pub next_id: u32,
     pub next_joint_id: u32,
     pub gravity: Vector3D,
@@ -24,6 +25,7 @@ impl PhysicsWorld {
         Self {
             bodies: HashMap::new(),
             joints: HashMap::new(),
+            disabled_collision_pairs: HashSet::new(),
             next_id: 1,
             next_joint_id: 1,
             gravity: Vector3D::new(gx, gy, gz),
@@ -79,16 +81,43 @@ impl PhysicsWorld {
             damping,
         );
         self.joints.insert(id, joint);
+        // Automatically disable collision between connected limbs to eliminate internal constraint fighting
+        self.disable_collision_pair(body_a, body_b);
         id
     }
 
+    pub fn disable_collision_pair(&mut self, body_a: u32, body_b: u32) {
+        let key = (body_a.min(body_b), body_a.max(body_b));
+        self.disabled_collision_pairs.insert(key);
+    }
+
+    pub fn enable_collision_pair(&mut self, body_a: u32, body_b: u32) {
+        let key = (body_a.min(body_b), body_a.max(body_b));
+        self.disabled_collision_pairs.remove(&key);
+    }
+
     pub fn remove_joint(&mut self, id: u32) -> bool {
-        self.joints.remove(&id).is_some()
+        if let Some(joint) = self.joints.remove(&id) {
+            self.enable_collision_pair(joint.body_a, joint.body_b);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn remove_body(&mut self, id: u32) -> bool {
-        // Also remove connected joints
-        self.joints.retain(|_, j| j.body_a != id && j.body_b != id);
+        // Remove connected joints and their collision filters
+        let affected_joints: Vec<u32> = self
+            .joints
+            .iter()
+            .filter(|(_, j)| j.body_a == id || j.body_b == id)
+            .map(|(&j_id, _)| j_id)
+            .collect();
+
+        for j_id in affected_joints {
+            self.remove_joint(j_id);
+        }
+
         self.bodies.remove(&id).is_some()
     }
 
@@ -153,12 +182,22 @@ impl PhysicsWorld {
             let mut pairs = Vec::new();
             for i in 0..keys.len() {
                 for j in (i + 1)..keys.len() {
-                    pairs.push((keys[i], keys[j]));
+                    let key = (keys[i].min(keys[j]), keys[i].max(keys[j]));
+                    if !self.disabled_collision_pairs.contains(&key) {
+                        pairs.push((keys[i], keys[j]));
+                    }
                 }
             }
             pairs
         } else {
-            self.spatial_hash.generate_candidate_pairs(&self.bodies)
+            let raw_pairs = self.spatial_hash.generate_candidate_pairs(&self.bodies);
+            raw_pairs
+                .into_iter()
+                .filter(|&(a, b)| {
+                    let key = (a.min(b), a.max(b));
+                    !self.disabled_collision_pairs.contains(&key)
+                })
+                .collect()
         };
 
         // Phase 3: Iterative Constraint & Contact Solver
@@ -184,7 +223,7 @@ impl PhysicsWorld {
                     }
 
                     if let Some(manifold) = Narrowphase::test_collision(body_a, body_b) {
-                        ContactSolver::resolve(body_a, body_b, &manifold);
+                        ContactSolver::resolve(body_a, body_b, &manifold, sub_dt);
                     }
                 }
             }
@@ -206,7 +245,7 @@ impl PhysicsWorld {
                     unsafe {
                         let body_a = &mut *ptr_a;
                         let body_b = &mut *ptr_b;
-                        joint.solve(body_a, body_b);
+                        joint.solve(body_a, body_b, sub_dt);
                     }
                 }
             }

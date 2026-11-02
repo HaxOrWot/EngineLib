@@ -259,3 +259,41 @@ fn test_distance_joint_constraint() {
         final_distance
     );
 }
+
+#[test]
+fn test_sliding_friction_deceleration() {
+    let mut world = PhysicsWorld::new(0.0, -9.81, 0.0);
+
+    // Floor at Y = 0.0 (top surface at Y = 0.5)
+    world.add_body(
+        Vector3D::new(0.0, 0.0, 0.0),
+        Vector3D::new(50.0, 1.0, 50.0),
+        0.0,
+        0.0,
+    );
+
+    // Sphere placed on the floor (Y = 1.0, radius = 0.5) with initial horizontal velocity
+    let sphere_id = world.add_sphere(
+        Vector3D::new(0.0, 1.0, 0.0),
+        0.5,
+        1.0,
+        0.0,
+        0.5, // friction 0.5
+    );
+
+    world.get_body_mut(sphere_id).unwrap().velocity = Vector3D::new(5.0, 0.0, 0.0);
+
+    // Step physics for 120 frames (2.0 seconds)
+    for _ in 0..120 {
+        world.step(1.0 / 60.0);
+    }
+
+    let b = world.get_body(sphere_id).unwrap();
+    // Due to ground friction and rolling resistance, velocity.x should be significantly reduced (< 1.0 m/s)
+    assert!(
+        b.velocity.x < 1.0,
+        "Friction failed to decelerate sliding sphere: velocity.x={}",
+        b.velocity.x
+    );
+}
+
