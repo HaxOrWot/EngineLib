@@ -266,6 +266,12 @@ pub extern "C" fn remove_rigid_body(id: u32) -> bool {
 }
 
 #[no_mangle]
+pub extern "C" fn remove_body(id: u32) -> bool {
+    remove_rigid_body(id)
+}
+
+
+#[no_mangle]
 pub extern "C" fn destroy_physics_world() {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let mut lock = match WORLD.lock() {
