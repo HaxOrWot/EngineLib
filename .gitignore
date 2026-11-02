@@ -1,0 +1,29 @@
+# Rust build artifacts
+target/
+**/target/
+Cargo.lock
+
+# Compiled binaries and dynamic libraries
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+
+# Editor and IDE configurations
+.vscode/
+.antigravity/
+.antigravity-ide/
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

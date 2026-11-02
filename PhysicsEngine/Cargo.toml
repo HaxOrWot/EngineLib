@@ -1,0 +1,18 @@
+[package]
+name = "physics_engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["GameLib Physics Team"]
+description = "Universal cross-language 3D rigid body physics engine dynamic library"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
