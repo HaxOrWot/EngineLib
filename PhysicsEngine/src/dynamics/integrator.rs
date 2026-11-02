@@ -4,8 +4,9 @@ use crate::math::vec3::Vector3D;
 pub struct Integrator;
 
 impl Integrator {
-    const SLEEP_VELOCITY_THRESHOLD_SQ: f32 = 0.05 * 0.05; // 0.05 m/s threshold
-    const SLEEP_TIME_REQUIRED: f32 = 0.5; // 0.5 seconds of near-rest to sleep
+    const SLEEP_VELOCITY_THRESHOLD_SQ: f32 = 0.08 * 0.08; // 0.08 m/s (~2.0 px/s threshold)
+    const SLEEP_ANGULAR_THRESHOLD_SQ: f32 = 0.08 * 0.08;
+    const SLEEP_TIME_REQUIRED: f32 = 0.35; // 0.35 seconds of near-rest to sleep
 
     /// Advances body kinematics by timestep dt using Symplectic (Semi-Implicit) Euler with linear & angular damping
     #[inline]
@@ -45,7 +46,7 @@ impl Integrator {
         // 4. Sleeping check (both linear and angular velocity)
         let speed_sq = body.velocity.length_squared();
         let ang_speed_sq = body.angular_velocity.length_squared();
-        if speed_sq < Self::SLEEP_VELOCITY_THRESHOLD_SQ && ang_speed_sq < 0.05 * 0.05 {
+        if speed_sq < Self::SLEEP_VELOCITY_THRESHOLD_SQ && ang_speed_sq < Self::SLEEP_ANGULAR_THRESHOLD_SQ {
             body.sleep_timer += dt;
             if body.sleep_timer >= Self::SLEEP_TIME_REQUIRED {
                 body.is_sleeping = 1;

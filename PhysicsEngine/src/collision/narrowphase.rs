@@ -6,6 +6,7 @@ pub struct ContactManifold {
     pub normal: Vector3D,
     pub penetration: f32,
     pub contact_point: Vector3D,
+    pub contact_point_2: Option<Vector3D>,
 }
 
 pub struct Narrowphase;
@@ -28,6 +29,7 @@ impl Narrowphase {
                     normal: -m.normal,
                     penetration: m.penetration,
                     contact_point: m.contact_point,
+                    contact_point_2: None,
                 })
             }
         }
@@ -84,16 +86,41 @@ impl Narrowphase {
         let z_min = min_a.z.max(min_b.z);
         let z_max = max_a.z.min(max_b.z);
 
-        let contact_point = Vector3D::new(
+        let centroid = Vector3D::new(
             (x_min + x_max) * 0.5,
             (y_min + y_max) * 0.5,
             (z_min + z_max) * 0.5,
         );
 
+        let mut point_1 = centroid;
+        let mut contact_point_2 = None;
+
+        // Generate dual contact points along the contact face for rotational stability
+        if normal.y.abs() > 0.7 {
+            let span_x = x_max - x_min;
+            if span_x > 0.04 {
+                let offset_x = span_x * 0.35;
+                point_1.x = centroid.x - offset_x;
+                let mut p2 = centroid;
+                p2.x = centroid.x + offset_x;
+                contact_point_2 = Some(p2);
+            }
+        } else if normal.x.abs() > 0.7 {
+            let span_y = y_max - y_min;
+            if span_y > 0.04 {
+                let offset_y = span_y * 0.35;
+                point_1.y = centroid.y - offset_y;
+                let mut p2 = centroid;
+                p2.y = centroid.y + offset_y;
+                contact_point_2 = Some(p2);
+            }
+        }
+
         Some(ContactManifold {
             normal,
             penetration,
-            contact_point,
+            contact_point: point_1,
+            contact_point_2,
         })
     }
 
@@ -125,6 +152,7 @@ impl Narrowphase {
             normal,
             penetration,
             contact_point,
+            contact_point_2: None,
         })
     }
 
@@ -168,6 +196,7 @@ impl Narrowphase {
             normal,
             penetration,
             contact_point: closest,
+            contact_point_2: None,
         })
     }
 }
