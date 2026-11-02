@@ -292,21 +292,21 @@ def main():
         # 3. Balls & Ground Shadows
         for b in balls:
             # Shadow on floor (Y = 0.5)
-            sp = camera.project(b.x, 0.51, b.z, screen_w, screen_h)
-            if sp[0]:
-                # Shadow size depends on height
-                h_factor = max(0.2, 1.0 - (b.y - 0.5) / 15.0)
-                focal = (screen_w / 2.0) / math.tan(camera.fov / 2.0)
-                sr_x = int((b.radius * 1.1 * focal) / sp[2] * h_factor)
-                sr_y = int(sr_x * 0.45) # Perspective ellipse squish
-                if sr_x > 2:
-                    render_queue.append((sp[2] + 0.01, "shadow", (sp[0], sp[1], sr_x, sr_y, int(130 * h_factor))))
+            if b.y >= 0.4:
+                sp = camera.project(b.x, 0.51, b.z, screen_w, screen_h)
+                if sp[0]:
+                    h_factor = max(0.1, min(1.0, 1.0 - (b.y - 0.5) / 15.0))
+                    focal = (screen_w / 2.0) / math.tan(camera.fov / 2.0)
+                    sr_x = max(2, int((b.radius * 1.1 * focal) / sp[2] * h_factor))
+                    sr_y = max(2, int(sr_x * 0.45))
+                    alpha = max(0, min(200, int(140 * h_factor)))
+                    render_queue.append((sp[2] + 0.01, "shadow", (sp[0], sp[1], sr_x, sr_y, alpha)))
 
             # Ball Sphere
             bp = camera.project(b.x, b.y, b.z, screen_w, screen_h)
             if bp[0]:
                 focal = (screen_w / 2.0) / math.tan(camera.fov / 2.0)
-                screen_radius = max(3, int((b.radius * focal) / bp[2]))
+                screen_radius = max(2, int((b.radius * focal) / bp[2]))
                 render_queue.append((bp[2], "sphere", (bp[0], bp[1], screen_radius, b.color)))
 
         # Sort render queue from back to front (Painter's Algorithm)
@@ -322,13 +322,17 @@ def main():
             elif rtype == "shadow":
                 # Draw transparent dark ellipse shadow
                 sx, sy, rx, ry, alpha = data
-                shadow_surf = pygame.Surface((rx * 2 + 2, ry * 2 + 2), pygame.SRCALPHA)
-                pygame.draw.ellipse(shadow_surf, (8, 10, 16, alpha), (0, 0, rx * 2, ry * 2))
-                screen.blit(shadow_surf, (sx - rx, sy - ry))
+                alpha = max(0, min(255, int(alpha)))
+                if rx > 0 and ry > 0 and alpha > 0:
+                    shadow_surf = pygame.Surface((rx * 2 + 2, ry * 2 + 2), pygame.SRCALPHA)
+                    pygame.draw.ellipse(shadow_surf, (8, 10, 16, alpha), (0, 0, rx * 2, ry * 2))
+                    screen.blit(shadow_surf, (sx - rx, sy - ry))
             elif rtype == "sphere":
                 sx, sy, r, col = data
+                r = max(2, int(r))
                 # Outer shadow/border
-                pygame.draw.circle(screen, (max(0, col[0]-60), max(0, col[1]-60), max(0, col[2]-60)), (sx, sy), r)
+                border_col = (max(0, col[0] - 60), max(0, col[1] - 60), max(0, col[2] - 60))
+                pygame.draw.circle(screen, border_col, (sx, sy), r)
                 # Main body
                 pygame.draw.circle(screen, col, (sx, sy), max(1, r - 1))
                 # Specular light reflection on top-left
