@@ -3,6 +3,10 @@ target/
 **/target/
 Cargo.lock
 
+# Documentation (excluded from git)
+docs/
+**/docs/
+
 # Compiled binaries and dynamic libraries
 *.exe
 *.dll
