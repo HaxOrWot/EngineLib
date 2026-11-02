@@ -25,6 +25,9 @@ docs/
 __pycache__/
 *.py[cod]
 
+# Analyser generated reports
+Analyser/reports/
+
 # OS generated files
 Thumbs.db
 ehthumbs.db

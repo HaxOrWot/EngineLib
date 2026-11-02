@@ -75,7 +75,20 @@ impl Narrowphase {
             (Vector3D::new(0.0, 0.0, sign), overlap_z)
         };
 
-        let contact_point = (body_a.position + body_b.position) * 0.5 - normal * (penetration * 0.5);
+        let (min_a, max_a) = body_a.aabb_bounds();
+        let (min_b, max_b) = body_b.aabb_bounds();
+        let x_min = min_a.x.max(min_b.x);
+        let x_max = max_a.x.min(max_b.x);
+        let y_min = min_a.y.max(min_b.y);
+        let y_max = max_a.y.min(max_b.y);
+        let z_min = min_a.z.max(min_b.z);
+        let z_max = max_a.z.min(max_b.z);
+
+        let contact_point = Vector3D::new(
+            (x_min + x_max) * 0.5,
+            (y_min + y_max) * 0.5,
+            (z_min + z_max) * 0.5,
+        );
 
         Some(ContactManifold {
             normal,

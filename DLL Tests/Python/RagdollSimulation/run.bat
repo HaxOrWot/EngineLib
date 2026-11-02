@@ -1,3 +1,0 @@
-@echo off
-echo [*] Launching EngineLib 3D Ragdoll Physics Simulation...
-python "%~dp0ragdoll_simulation.py"

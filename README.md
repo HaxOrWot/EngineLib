@@ -164,9 +164,9 @@ Outputs `PhysicsEngine/target/release/physics_engine.dll` (or `.so` / `.dylib`).
 # Run native Rust unit & integration tests
 cargo test
 
-# Run all multi-language integration tests (Python, C, C++)
-cd "../DLL Tests"
-.\run_all_tests.ps1
+# Run multi-language integration samples (Python, C, C++)
+cd "../SampleTest"
+.\run_all.bat
 ```
 
 ---

@@ -1,3 +1,0 @@
-@echo off
-echo [*] Launching EngineLib 3D Ball Physics Simulation...
-python "%~dp0simulation.py"
