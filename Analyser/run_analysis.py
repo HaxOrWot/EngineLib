@@ -75,11 +75,9 @@ def run_gamesim_scenario(backend="dll", total_frames=180, output_dir=None, headl
     if not pygame.font.get_init():
         pygame.font.init()
 
-    try:
-        from game import SiegePhysicsGame
-    except ImportError:
-        game_mod = load_module_from_path("game", os.path.join(gamesim_dir, "game.py"))
-        SiegePhysicsGame = game_mod.SiegePhysicsGame
+    # Load GameSim module directly from EngineLib Games
+    game_mod = load_module_from_path("game", os.path.join(gamesim_dir, "game.py"))
+    SiegePhysicsGame = game_mod.SiegePhysicsGame
 
     out_dir = output_dir or os.path.join(analyser_dir, "reports", f"gamesim_{backend}")
     os.makedirs(out_dir, exist_ok=True)
@@ -211,12 +209,10 @@ def run_ball_scenario(total_frames=180, output_dir=None, headless=True):
     import pygame
     pygame.init()
 
-    try:
-        from sample import load_physics_engine, Vector3D
-    except ImportError:
-        sample_mod = load_module_from_path("sample", os.path.join(sampletest_dir, "sample.py"))
-        load_physics_engine = sample_mod.load_physics_engine
-        Vector3D = sample_mod.Vector3D
+    # Load EngineLib sample bindings directly from SampleTest
+    sample_mod = load_module_from_path("sample", os.path.join(sampletest_dir, "sample.py"))
+    load_physics_engine = sample_mod.load_physics_engine
+    Vector3D = sample_mod.Vector3D
     from ctypes import byref
 
     class Camera3D:
