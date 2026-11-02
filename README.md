@@ -187,8 +187,4 @@ cd "../DLL Tests"
 
 ## 📄 License
 
-This project is licensed under either of:
-- **MIT License** ([LICENSE-MIT](LICENSE-MIT))
-- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE))
-
-at your option.
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
