@@ -134,10 +134,10 @@ class SiegePhysicsGame:
         # Cannon Setup
         self.cannon_x = 130
         self.cannon_y = 520
-        self.aim_angle = -math.pi / 4.0
-        self.aim_power = 750.0
-        self.min_power = 250.0
-        self.max_power = 1100.0
+        self.aim_angle = -math.pi * 0.28
+        self.aim_power = 640.0
+        self.min_power = 220.0
+        self.max_power = 920.0
 
         # Ammo Inventory
         self.selected_ammo = 1
@@ -185,9 +185,9 @@ class SiegePhysicsGame:
             self.world.destroy()
 
         if self.physics_mode == "DLL":
-            self.world = DLLPhysicsWorld(gravity_x=0.0, gravity_y=950.0)
+            self.world = DLLPhysicsWorld(gravity_x=0.0, gravity_y=640.0)
         else:
-            self.world = BuiltinPhysicsWorld(gravity_x=0.0, gravity_y=950.0)
+            self.world = BuiltinPhysicsWorld(gravity_x=0.0, gravity_y=640.0)
 
         # Static Floor & Bedrock
         floor_y = 610
@@ -627,27 +627,46 @@ class SiegePhysicsGame:
         elif b.shape_type == "box":
             half_w = b.width / 2.0
             half_h = b.height / 2.0
-            rect = pygame.Rect(px - half_w, py - half_h, b.width, b.height)
 
             if b.material == "terrain":
+                rect = pygame.Rect(px - half_w, py - half_h, b.width, b.height)
                 pygame.draw.rect(self.screen, COLOR_GROUND_DIRT, rect)
                 pygame.draw.rect(self.screen, COLOR_GROUND, (rect.x, rect.y, rect.width, 10))
-            elif b.material == "tnt":
-                pygame.draw.rect(self.screen, COLOR_TNT, rect)
-                pygame.draw.rect(self.screen, (150, 20, 20), rect, 2)
-                pygame.draw.rect(self.screen, COLOR_TNT_YELLOW, (rect.x, rect.centery - 6, rect.width, 12))
-                tnt_txt = self.font_small.render("TNT", True, (20, 20, 20))
-                self.screen.blit(tnt_txt, (rect.centerx - tnt_txt.get_width() / 2, rect.centery - 8))
-            elif b.material == "stone":
-                pygame.draw.rect(self.screen, COLOR_STONE, rect)
-                pygame.draw.rect(self.screen, COLOR_STONE_BORDER, rect, 2)
-                if b.height > 30:
-                    pygame.draw.line(self.screen, COLOR_STONE_BORDER, (rect.x, rect.centery), (rect.right, rect.centery), 1)
             else:
-                pygame.draw.rect(self.screen, COLOR_WOOD, rect)
-                pygame.draw.rect(self.screen, COLOR_WOOD_BORDER, rect, 2)
-                pygame.draw.line(self.screen, COLOR_WOOD_BORDER, (rect.x + 4, rect.y + 4), (rect.right - 4, rect.y + 4), 1)
-                pygame.draw.line(self.screen, COLOR_WOOD_BORDER, (rect.x + 4, rect.bottom - 4), (rect.right - 4, rect.bottom - 4), 1)
+                # Rotated polygon for realistic tumbling & toppling
+                angle = getattr(b, "angle", 0.0)
+                cos_a = math.cos(angle)
+                sin_a = math.sin(angle)
+
+                # 4 Rotated Corner Points
+                corners = [
+                    (int(px + (-half_w * cos_a - -half_h * sin_a)), int(py + (-half_w * sin_a + -half_h * cos_a))),
+                    (int(px + ( half_w * cos_a - -half_h * sin_a)), int(py + ( half_w * sin_a + -half_h * cos_a))),
+                    (int(px + ( half_w * cos_a -  half_h * sin_a)), int(py + ( half_w * sin_a +  half_h * cos_a))),
+                    (int(px + (-half_w * cos_a -  half_h * sin_a)), int(py + (-half_w * sin_a +  half_h * cos_a))),
+                ]
+
+                if b.material == "tnt":
+                    pygame.draw.polygon(self.screen, COLOR_TNT, corners)
+                    pygame.draw.polygon(self.screen, (150, 20, 20), corners, 2)
+                    # Warning diagonal hazard line
+                    pygame.draw.line(self.screen, COLOR_TNT_YELLOW, corners[0], corners[2], 2)
+                    pygame.draw.line(self.screen, COLOR_TNT_YELLOW, corners[1], corners[3], 2)
+                    tnt_txt = self.font_small.render("TNT", True, (20, 20, 20))
+                    self.screen.blit(tnt_txt, (px - tnt_txt.get_width() / 2, py - tnt_txt.get_height() / 2))
+                elif b.material == "stone":
+                    pygame.draw.polygon(self.screen, COLOR_STONE, corners)
+                    pygame.draw.polygon(self.screen, COLOR_STONE_BORDER, corners, 2)
+                    # Chiseled bevel highlights
+                    pygame.draw.line(self.screen, (170, 180, 190), corners[0], corners[1], 2)
+                    pygame.draw.line(self.screen, (80, 90, 100), corners[2], corners[3], 2)
+                else:
+                    # Wood Plank with rotated center seam
+                    pygame.draw.polygon(self.screen, COLOR_WOOD, corners)
+                    pygame.draw.polygon(self.screen, COLOR_WOOD_BORDER, corners, 2)
+                    m1 = ((corners[0][0] + corners[3][0]) // 2, (corners[0][1] + corners[3][1]) // 2)
+                    m2 = ((corners[1][0] + corners[2][0]) // 2, (corners[1][1] + corners[2][1]) // 2)
+                    pygame.draw.line(self.screen, COLOR_WOOD_BORDER, m1, m2, 1)
 
     def _draw_hud(self):
         top_surf = pygame.Surface((self.width, 54), pygame.SRCALPHA)

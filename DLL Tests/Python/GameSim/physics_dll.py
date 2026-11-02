@@ -1,7 +1,7 @@
 """
 Native DLL Physics Engine Backend for SiegePhysics
 Hooks into EngineLib (physics_engine.dll) via ctypes to provide high-performance
-C-accelerated rigid-body dynamics, contact resolution, and collision solving.
+C-accelerated rigid-body dynamics, torque, angular velocity, and toppling physics.
 """
 
 import os
@@ -60,6 +60,35 @@ def configure_dll_signatures(lib):
 
     lib.set_body_velocity.argtypes = [c_uint32, c_float, c_float, c_float]
     lib.set_body_velocity.restype = c_bool
+
+    # Rotational FFI
+    if hasattr(lib, "get_body_rotation"):
+        lib.get_body_rotation.argtypes = [c_uint32, POINTER(Vector3D)]
+        lib.get_body_rotation.restype = c_bool
+
+    if hasattr(lib, "set_body_rotation"):
+        lib.set_body_rotation.argtypes = [c_uint32, c_float, c_float, c_float]
+        lib.set_body_rotation.restype = c_bool
+
+    if hasattr(lib, "get_body_angular_velocity"):
+        lib.get_body_angular_velocity.argtypes = [c_uint32, POINTER(Vector3D)]
+        lib.get_body_angular_velocity.restype = c_bool
+
+    if hasattr(lib, "set_body_angular_velocity"):
+        lib.set_body_angular_velocity.argtypes = [c_uint32, c_float, c_float, c_float]
+        lib.set_body_angular_velocity.restype = c_bool
+
+    if hasattr(lib, "apply_torque"):
+        lib.apply_torque.argtypes = [c_uint32, c_float, c_float, c_float]
+        lib.apply_torque.restype = None
+
+    if hasattr(lib, "apply_impulse_at_point"):
+        lib.apply_impulse_at_point.argtypes = [
+            c_uint32,
+            c_float, c_float, c_float,
+            c_float, c_float, c_float
+        ]
+        lib.apply_impulse_at_point.restype = None
 
     lib.apply_force.argtypes = [c_uint32, c_float, c_float, c_float]
     lib.apply_force.restype = None
@@ -142,6 +171,8 @@ class DLLRigidBody2D:
         self.shape_type = shape_type
         self.position = Vector2D(x, y)
         self.velocity = Vector2D(0.0, 0.0)
+        self.angle = 0.0
+        self.angular_velocity = 0.0
 
         self.mass = float(mass)
         self.inv_mass = 1.0 / self.mass if self.mass > 0.0 else 0.0
@@ -191,7 +222,7 @@ class DLLRigidBody2D:
 class DLLPhysicsWorld:
     PPM = 25.0  # Pixels Per Meter scaling factor
 
-    def __init__(self, gravity_x=0.0, gravity_y=950.0):
+    def __init__(self, gravity_x=0.0, gravity_y=680.0):
         self.raw_lib = load_physics_dll()
         self.lib = configure_dll_signatures(self.raw_lib)
 
@@ -205,13 +236,15 @@ class DLLPhysicsWorld:
         self.lib.destroy_physics_world()
         self.lib.init_physics_world(gx_m, gy_m, 0.0)
 
-        # High-precision substeps and iterations
+        # High-precision substeps and iterations for stable stacks
         self.lib.set_world_substeps(4)
-        self.lib.set_solver_iterations(6)
+        self.lib.set_solver_iterations(8)
 
         # Ctypes buffers
         self._pos_buf = Vector3D()
         self._vel_buf = Vector3D()
+        self._rot_buf = Vector3D()
+        self._ang_buf = Vector3D()
 
     def destroy(self):
         self.lib.destroy_physics_world()
@@ -223,7 +256,6 @@ class DLLPhysicsWorld:
         my = y / self.PPM
         mr = radius / self.PPM
 
-        # Add sphere body to native C world (Z=0.0)
         c_id = self.lib.add_sphere_body(
             c_float(mx), c_float(my), c_float(0.0),
             c_float(mr), c_float(mass), c_float(restitution), c_float(friction)
@@ -242,9 +274,8 @@ class DLLPhysicsWorld:
         my = y / self.PPM
         mw = width / self.PPM
         mh = height / self.PPM
-        mz = 10.0  # Thick slab in Z so 2D planar collisions never slip
+        mz = 10.0  # Deep Z slab to lock 2D planar collisions
 
-        # Add box body to native C world
         c_id = self.lib.add_rigid_body(
             c_float(mx), c_float(my), c_float(0.0),
             c_float(mw), c_float(mh), c_float(mz),
@@ -276,14 +307,26 @@ class DLLPhysicsWorld:
         vy_m = vy / self.PPM
         self.lib.set_body_velocity(body.id, c_float(vx_m), c_float(vy_m), c_float(0.0))
 
-    def apply_impulse(self, body, impulse_x, impulse_y):
+    def apply_impulse(self, body, impulse_x, impulse_y, at_point_x=None, at_point_y=None):
         if body.is_static or body.inv_mass <= 0.0:
             return
-        dvx = (impulse_x / body.mass)
-        dvy = (impulse_y / body.mass)
-        new_vx = body.velocity.x + dvx
-        new_vy = body.velocity.y + dvy
-        self.set_body_velocity(body, new_vx, new_vy)
+
+        if at_point_x is not None and at_point_y is not None and hasattr(self.lib, "apply_impulse_at_point"):
+            ix_m = impulse_x / self.PPM
+            iy_m = impulse_y / self.PPM
+            px_m = at_point_x / self.PPM
+            py_m = at_point_y / self.PPM
+            self.lib.apply_impulse_at_point(
+                body.id,
+                c_float(ix_m), c_float(iy_m), c_float(0.0),
+                c_float(px_m), c_float(py_m), c_float(0.0),
+            )
+        else:
+            dvx = (impulse_x / body.mass)
+            dvy = (impulse_y / body.mass)
+            new_vx = body.velocity.x + dvx
+            new_vy = body.velocity.y + dvy
+            self.set_body_velocity(body, new_vx, new_vy)
 
     def apply_radial_impulse(self, center_x, center_y, radius, max_force, max_damage=150.0):
         center = Vector2D(center_x, center_y)
@@ -299,8 +342,12 @@ class DLLPhysicsWorld:
                 if dir_vec.length_squared() < 0.01:
                     dir_vec = Vector2D(0.0, -1.0)
 
-                impulse = dir_vec * (max_force * factor * 0.04)
-                self.apply_impulse(b, impulse.x, impulse.y)
+                impulse = dir_vec * (max_force * factor * 0.045)
+                # Apply at offset point for rotational blast tumbling
+                contact_pt_x = b.position.x - dir_vec.x * (b.width * 0.4 if b.shape_type == "box" else b.radius)
+                contact_pt_y = b.position.y - dir_vec.y * (b.height * 0.4 if b.shape_type == "box" else b.radius)
+
+                self.apply_impulse(b, impulse.x, impulse.y, contact_pt_x, contact_pt_y)
 
                 dmg = max_damage * factor
                 died = b.take_damage(dmg)
@@ -317,21 +364,33 @@ class DLLPhysicsWorld:
         # 1. Step the native C++ physics engine
         self.lib.step_physics(c_float(dt))
 
-        # 2. Synchronize body coordinates & velocities from native DLL memory
+        # 2. Synchronize linear & rotational state from native DLL memory
+        has_rot = hasattr(self.lib, "get_body_rotation")
+        has_ang = hasattr(self.lib, "get_body_angular_velocity")
+
         for b in self.bodies:
             if not b.is_static:
+                # Position
                 if self.lib.get_body_position(b.id, byref(self._pos_buf)):
                     b.position.x = self._pos_buf.x * self.PPM
                     b.position.y = self._pos_buf.y * self.PPM
 
+                # Linear Velocity
                 if self.lib.get_body_velocity(b.id, byref(self._vel_buf)):
                     prev_vx = b.velocity.x
                     prev_vy = b.velocity.y
                     b.velocity.x = self._vel_buf.x * self.PPM
                     b.velocity.y = self._vel_buf.y * self.PPM
 
-                    # Impact damage detection based on sudden velocity deceleration
+                    # Impact damage detection based on deceleration
                     dv = math.hypot(b.velocity.x - prev_vx, b.velocity.y - prev_vy)
-                    if dv > 190.0:
-                        dmg = (dv - 190.0) * 0.35
+                    if dv > 180.0:
+                        dmg = (dv - 180.0) * 0.35
                         b.take_damage(dmg)
+
+                # Rotation & Angular Velocity (Z-axis in 2D plane)
+                if has_rot and self.lib.get_body_rotation(b.id, byref(self._rot_buf)):
+                    b.angle = self._rot_buf.z
+
+                if has_ang and self.lib.get_body_angular_velocity(b.id, byref(self._ang_buf)):
+                    b.angular_velocity = self._ang_buf.z

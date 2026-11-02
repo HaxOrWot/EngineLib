@@ -5,6 +5,7 @@ use crate::math::vec3::Vector3D;
 pub struct ContactManifold {
     pub normal: Vector3D,
     pub penetration: f32,
+    pub contact_point: Vector3D,
 }
 
 pub struct Narrowphase;
@@ -26,6 +27,7 @@ impl Narrowphase {
                 Self::test_sphere_aabb(body_b, body_a).map(|m| ContactManifold {
                     normal: -m.normal,
                     penetration: m.penetration,
+                    contact_point: m.contact_point,
                 })
             }
         }
@@ -73,9 +75,12 @@ impl Narrowphase {
             (Vector3D::new(0.0, 0.0, sign), overlap_z)
         };
 
+        let contact_point = (body_a.position + body_b.position) * 0.5 - normal * (penetration * 0.5);
+
         Some(ContactManifold {
             normal,
             penetration,
+            contact_point,
         })
     }
 
@@ -98,12 +103,15 @@ impl Narrowphase {
         let normal = if dist > Self::EPSILON {
             delta * (1.0 / dist)
         } else {
-            Vector3D::UP // Default separation upward
+            Vector3D::UP
         };
+
+        let contact_point = sphere_a.position - normal * (sphere_a.radius - penetration * 0.5);
 
         Some(ContactManifold {
             normal,
             penetration,
+            contact_point,
         })
     }
 
@@ -116,7 +124,6 @@ impl Narrowphase {
         let box_min = aabb.position - half;
         let box_max = aabb.position + half;
 
-        // Find closest point on AABB to sphere center
         let closest = sphere.position.clamp(box_min, box_max);
         let delta = sphere.position - closest;
         let dist_sq = delta.length_squared();
@@ -130,7 +137,6 @@ impl Narrowphase {
         let (normal, penetration) = if dist > Self::EPSILON {
             (delta * (1.0 / dist), sphere.radius - dist)
         } else {
-            // Sphere center is inside the AABB: push out along shallowest face
             let d = sphere.position - aabb.position;
             let ox = half.x - d.x.abs();
             let oy = half.y - d.y.abs();
@@ -148,6 +154,7 @@ impl Narrowphase {
         Some(ContactManifold {
             normal,
             penetration,
+            contact_point: closest,
         })
     }
 }

@@ -236,6 +236,102 @@ pub extern "C" fn set_body_velocity(id: u32, vx: f32, vy: f32, vz: f32) -> bool 
     result.unwrap_or(false)
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn get_body_rotation(id: u32, out_rot: *mut Vector3D) -> bool {
+    if out_rot.is_null() {
+        return false;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            if let Some(body) = world.get_body(id) {
+                std::ptr::write(out_rot, body.rotation);
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_rotation(id: u32, rx: f32, ry: f32, rz: f32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.rotation = Vector3D::new(rx, ry, rz);
+                body.wake();
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn get_body_angular_velocity(id: u32, out_ang_vel: *mut Vector3D) -> bool {
+    if out_ang_vel.is_null() {
+        return false;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            if let Some(body) = world.get_body(id) {
+                std::ptr::write(out_ang_vel, body.angular_velocity);
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_angular_velocity(id: u32, wx: f32, wy: f32, wz: f32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.angular_velocity = Vector3D::new(wx, wy, wz);
+                body.wake();
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn apply_torque(id: u32, tx: f32, ty: f32, tz: f32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.apply_torque(Vector3D::new(tx, ty, tz));
+            }
+        });
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn apply_impulse_at_point(
+    id: u32,
+    ix: f32, iy: f32, iz: f32,
+    px: f32, py: f32, pz: f32,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.apply_impulse_at_point(
+                    Vector3D::new(ix, iy, iz),
+                    Vector3D::new(px, py, pz),
+                );
+            }
+        });
+    }));
+}
 
 #[no_mangle]
 pub extern "C" fn apply_force(id: u32, fx: f32, fy: f32, fz: f32) {

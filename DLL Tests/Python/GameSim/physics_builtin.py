@@ -405,15 +405,20 @@ class BuiltinPhysicsWorld:
             a.position += normal * (a.inv_mass * correction)
             b.position -= normal * (b.inv_mass * correction)
 
-        # 2. Velocity resolution
-        rel_vel = a.velocity - b.velocity
+        # 2. Velocity resolution with rotational lever arms
+        r_a = m.contact_point - a.position
+        r_b = m.contact_point - b.position
+
+        # Relative contact velocity including angular motion
+        v_a_contact = a.velocity + Vector2D(-a.angular_velocity * r_a.y, a.angular_velocity * r_a.x)
+        v_b_contact = b.velocity + Vector2D(-b.angular_velocity * r_b.y, b.angular_velocity * r_b.x)
+        rel_vel = v_a_contact - v_b_contact
         vel_along_normal = rel_vel.dot(normal)
 
         # Relative impact speed for structural damage
         impact_speed = abs(vel_along_normal)
-        if impact_speed > 180.0:
-            # High-velocity impact inflicts damage
-            dmg = (impact_speed - 180.0) * 0.35
+        if impact_speed > 160.0:
+            dmg = (impact_speed - 160.0) * 0.35
             a.take_damage(dmg)
             b.take_damage(dmg)
 
@@ -429,8 +434,18 @@ class BuiltinPhysicsWorld:
             a.velocity += impulse * a.inv_mass
             b.velocity -= impulse * b.inv_mass
 
-        # 3. Tangential Friction
-        updated_rel_vel = a.velocity - b.velocity
+            # Rotational torque from off-center impact
+            if not a.is_static and a.inv_inertia > 0.0:
+                t_a = r_a.cross(impulse)
+                a.angular_velocity += t_a * a.inv_inertia
+            if not b.is_static and b.inv_inertia > 0.0:
+                t_b = r_b.cross(impulse * -1.0)
+                b.angular_velocity += t_b * b.inv_inertia
+
+        # 3. Tangential Friction with Rotational Spin
+        updated_v_a = a.velocity + Vector2D(-a.angular_velocity * r_a.y, a.angular_velocity * r_a.x)
+        updated_v_b = b.velocity + Vector2D(-b.angular_velocity * r_b.y, b.angular_velocity * r_b.x)
+        updated_rel_vel = updated_v_a - updated_v_b
         tangent_vel = updated_rel_vel - normal * updated_rel_vel.dot(normal)
         tangent_speed = tangent_vel.length()
 
@@ -449,6 +464,11 @@ class BuiltinPhysicsWorld:
             friction_vec = tangent * friction_clamped
             a.velocity += friction_vec * a.inv_mass
             b.velocity -= friction_vec * b.inv_mass
+
+            if not a.is_static and a.inv_inertia > 0.0:
+                a.angular_velocity += r_a.cross(friction_vec) * a.inv_inertia
+            if not b.is_static and b.inv_inertia > 0.0:
+                b.angular_velocity += r_b.cross(friction_vec * -1.0) * b.inv_inertia
 
         # Wake bodies up
         a.is_sleeping = False
