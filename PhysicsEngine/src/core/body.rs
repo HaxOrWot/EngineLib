@@ -23,6 +23,7 @@ pub struct RigidBody3D {
     pub shape_type: u32,
     pub is_sleeping: u32, // 0 = active, 1 = sleeping
     pub sleep_timer: f32,
+    pub linear_damping: f32,
 }
 
 impl RigidBody3D {
@@ -45,6 +46,7 @@ impl RigidBody3D {
             shape_type: ShapeType::AABB as u32,
             is_sleeping: 0,
             sleep_timer: 0.0,
+            linear_damping: 0.0,
         }
     }
 
@@ -75,6 +77,7 @@ impl RigidBody3D {
             shape_type: ShapeType::Sphere as u32,
             is_sleeping: 0,
             sleep_timer: 0.0,
+            linear_damping: 0.0,
         }
     }
 

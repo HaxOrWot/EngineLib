@@ -209,3 +209,53 @@ fn test_spatial_hash_many_bodies() {
         world.step(1.0 / 60.0);
     }
 }
+
+#[test]
+fn test_distance_joint_constraint() {
+    let mut world = PhysicsWorld::new(0.0, 0.0, 0.0); // Zero gravity for pure constraint test
+    world.substeps = 4;
+    world.solver_iterations = 8;
+
+    // Body A at (0, 0, 0)
+    let body_a = world.add_body(
+        Vector3D::new(0.0, 0.0, 0.0),
+        Vector3D::new(1.0, 1.0, 1.0),
+        1.0,
+        0.5,
+    );
+
+    // Body B placed far away at (5.0, 0, 0)
+    let body_b = world.add_body(
+        Vector3D::new(5.0, 0.0, 0.0),
+        Vector3D::new(1.0, 1.0, 1.0),
+        1.0,
+        0.5,
+    );
+
+    // Target joint distance = 2.0 with high stiffness
+    world.add_distance_joint(
+        body_a,
+        body_b,
+        Vector3D::ZERO,
+        Vector3D::ZERO,
+        2.0,
+        0.95,
+        0.2,
+    );
+
+    // Step physics for 30 frames
+    for _ in 0..30 {
+        world.step(1.0 / 60.0);
+    }
+
+    let pos_a = world.get_body(body_a).unwrap().position;
+    let pos_b = world.get_body(body_b).unwrap().position;
+    let final_distance = pos_a.distance(pos_b);
+
+    // Assert that distance converged to 2.0 within tolerance
+    assert!(
+        (final_distance - 2.0).abs() < 0.15,
+        "Joint failed to converge: distance={}, expected 2.0",
+        final_distance
+    );
+}

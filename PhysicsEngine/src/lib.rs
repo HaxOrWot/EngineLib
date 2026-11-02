@@ -14,6 +14,7 @@ pub use dynamics::integrator::Integrator;
 pub use collision::broadphase::SpatialHash;
 pub use collision::narrowphase::{ContactManifold, Narrowphase};
 pub use solver::contact::ContactSolver;
+pub use solver::joint::DistanceJoint;
 
 // Re-export FFI entry points
 pub use ffi::exports::*;

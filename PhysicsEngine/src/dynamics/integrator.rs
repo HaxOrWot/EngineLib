@@ -7,7 +7,7 @@ impl Integrator {
     const SLEEP_VELOCITY_THRESHOLD_SQ: f32 = 0.05 * 0.05; // 0.05 m/s threshold
     const SLEEP_TIME_REQUIRED: f32 = 0.5; // 0.5 seconds of near-rest to sleep
 
-    /// Advances body kinematics by timestep dt using Symplectic (Semi-Implicit) Euler
+    /// Advances body kinematics by timestep dt using Symplectic (Semi-Implicit) Euler with air damping
     #[inline]
     pub fn integrate(body: &mut RigidBody3D, gravity: Vector3D, dt: f32) {
         if body.is_static() {
@@ -22,7 +22,13 @@ impl Integrator {
         // 1. Advance velocity by acceleration + global gravity
         body.velocity += (body.acceleration + gravity) * dt;
 
-        // 2. Velocity damping / sleeping check
+        // 2. Air resistance / linear drag damping
+        if body.linear_damping > 0.0 {
+            let damping_factor = 1.0 / (1.0 + body.linear_damping * dt);
+            body.velocity *= damping_factor;
+        }
+
+        // 3. Velocity damping / sleeping check
         let speed_sq = body.velocity.length_squared();
         if speed_sq < Self::SLEEP_VELOCITY_THRESHOLD_SQ {
             body.sleep_timer += dt;
@@ -36,10 +42,10 @@ impl Integrator {
             body.sleep_timer = 0.0;
         }
 
-        // 3. Advance position by newly computed velocity
+        // 4. Advance position by newly computed velocity
         body.position += body.velocity * dt;
 
-        // 4. Reset accumulated forces for next frame
+        // 5. Reset accumulated forces for next frame
         body.acceleration = Vector3D::ZERO;
     }
 }

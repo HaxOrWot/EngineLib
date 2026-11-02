@@ -6,11 +6,16 @@ use crate::dynamics::integrator::Integrator;
 use crate::math::ray::{Ray, RaycastHit};
 use crate::math::vec3::Vector3D;
 use crate::solver::contact::ContactSolver;
+use crate::solver::joint::DistanceJoint;
 
 pub struct PhysicsWorld {
     pub bodies: HashMap<u32, RigidBody3D>,
+    pub joints: HashMap<u32, DistanceJoint>,
     pub next_id: u32,
+    pub next_joint_id: u32,
     pub gravity: Vector3D,
+    pub substeps: u32,
+    pub solver_iterations: u32,
     spatial_hash: SpatialHash,
 }
 
@@ -18,8 +23,12 @@ impl PhysicsWorld {
     pub fn new(gx: f32, gy: f32, gz: f32) -> Self {
         Self {
             bodies: HashMap::new(),
+            joints: HashMap::new(),
             next_id: 1,
+            next_joint_id: 1,
             gravity: Vector3D::new(gx, gy, gz),
+            substeps: 2,
+            solver_iterations: 4,
             spatial_hash: SpatialHash::new(4.0),
         }
     }
@@ -47,7 +56,39 @@ impl PhysicsWorld {
         id
     }
 
+    pub fn add_distance_joint(
+        &mut self,
+        body_a: u32,
+        body_b: u32,
+        offset_a: Vector3D,
+        offset_b: Vector3D,
+        rest_length: f32,
+        stiffness: f32,
+        damping: f32,
+    ) -> u32 {
+        let id = self.next_joint_id;
+        self.next_joint_id += 1;
+        let joint = DistanceJoint::new(
+            id,
+            body_a,
+            body_b,
+            offset_a,
+            offset_b,
+            rest_length,
+            stiffness,
+            damping,
+        );
+        self.joints.insert(id, joint);
+        id
+    }
+
+    pub fn remove_joint(&mut self, id: u32) -> bool {
+        self.joints.remove(&id).is_some()
+    }
+
     pub fn remove_body(&mut self, id: u32) -> bool {
+        // Also remove connected joints
+        self.joints.retain(|_, j| j.body_a != id && j.body_b != id);
         self.bodies.remove(&id).is_some()
     }
 
@@ -92,13 +133,21 @@ impl PhysicsWorld {
             return;
         }
 
-        // Phase 1: Numerical Integration
+        let num_substeps = self.substeps.max(1);
+        let sub_dt = dt / (num_substeps as f32);
+
+        for _ in 0..num_substeps {
+            self.step_substep(sub_dt);
+        }
+    }
+
+    fn step_substep(&mut self, sub_dt: f32) {
+        // Phase 1: Numerical Integration with Air Damping
         for body in self.bodies.values_mut() {
-            Integrator::integrate(body, self.gravity, dt);
+            Integrator::integrate(body, self.gravity, sub_dt);
         }
 
         // Phase 2: Spatial Hash Broadphase
-        // (For small worlds <= 20 bodies, brute force has lower constant overhead; for > 20, spatial hash scales O(N))
         let candidate_pairs = if self.bodies.len() <= 20 {
             let keys: Vec<u32> = self.bodies.keys().copied().collect();
             let mut pairs = Vec::new();
@@ -112,29 +161,53 @@ impl PhysicsWorld {
             self.spatial_hash.generate_candidate_pairs(&self.bodies)
         };
 
-        // Phase 3: Narrowphase & Contact Resolution
-        for (id_a, id_b) in candidate_pairs {
-            // Disjoint lookup validation
-            if !self.bodies.contains_key(&id_a) || !self.bodies.contains_key(&id_b) {
-                continue;
-            }
-
-            let ptr_a = self.bodies.get_mut(&id_a).unwrap() as *mut RigidBody3D;
-            let ptr_b = self.bodies.get_mut(&id_b).unwrap() as *mut RigidBody3D;
-
-            unsafe {
-                let body_a = &mut *ptr_a;
-                let body_b = &mut *ptr_b;
-
-                // Skip if both bodies are asleep or static
-                if (body_a.is_static() || body_a.is_sleeping == 1)
-                    && (body_b.is_static() || body_b.is_sleeping == 1)
-                {
+        // Phase 3: Iterative Constraint & Contact Solver
+        let iters = self.solver_iterations.max(1);
+        for _ in 0..iters {
+            // Solve Collisions
+            for (id_a, id_b) in &candidate_pairs {
+                if !self.bodies.contains_key(id_a) || !self.bodies.contains_key(id_b) {
                     continue;
                 }
 
-                if let Some(manifold) = Narrowphase::test_collision(body_a, body_b) {
-                    ContactSolver::resolve(body_a, body_b, &manifold);
+                let ptr_a = self.bodies.get_mut(id_a).unwrap() as *mut RigidBody3D;
+                let ptr_b = self.bodies.get_mut(id_b).unwrap() as *mut RigidBody3D;
+
+                unsafe {
+                    let body_a = &mut *ptr_a;
+                    let body_b = &mut *ptr_b;
+
+                    if (body_a.is_static() || body_a.is_sleeping == 1)
+                        && (body_b.is_static() || body_b.is_sleeping == 1)
+                    {
+                        continue;
+                    }
+
+                    if let Some(manifold) = Narrowphase::test_collision(body_a, body_b) {
+                        ContactSolver::resolve(body_a, body_b, &manifold);
+                    }
+                }
+            }
+
+            // Solve Articulated Joints
+            let joint_ids: Vec<u32> = self.joints.keys().copied().collect();
+            for j_id in joint_ids {
+                if let Some(joint) = self.joints.get(&j_id).copied() {
+                    let id_a = joint.body_a;
+                    let id_b = joint.body_b;
+
+                    if id_a == id_b || !self.bodies.contains_key(&id_a) || !self.bodies.contains_key(&id_b) {
+                        continue;
+                    }
+
+                    let ptr_a = self.bodies.get_mut(&id_a).unwrap() as *mut RigidBody3D;
+                    let ptr_b = self.bodies.get_mut(&id_b).unwrap() as *mut RigidBody3D;
+
+                    unsafe {
+                        let body_a = &mut *ptr_a;
+                        let body_b = &mut *ptr_b;
+                        joint.solve(body_a, body_b);
+                    }
                 }
             }
         }

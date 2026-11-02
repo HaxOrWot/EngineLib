@@ -90,6 +90,69 @@ pub extern "C" fn add_sphere_body(
 }
 
 #[no_mangle]
+pub extern "C" fn add_distance_joint(
+    body_a: u32,
+    body_b: u32,
+    ax: f32, ay: f32, az: f32,
+    bx: f32, by: f32, bz: f32,
+    rest_len: f32,
+    stiffness: f32,
+    damping: f32,
+) -> u32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.add_distance_joint(
+                body_a,
+                body_b,
+                Vector3D::new(ax, ay, az),
+                Vector3D::new(bx, by, bz),
+                rest_len,
+                stiffness,
+                damping,
+            )
+        }).unwrap_or(0)
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn remove_joint(id: u32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| world.remove_joint(id)).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_damping(id: u32, damping: f32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.linear_damping = damping.max(0.0);
+            }
+        });
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn set_world_substeps(substeps: u32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.substeps = substeps.clamp(1, 16);
+        });
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn set_solver_iterations(iters: u32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.solver_iterations = iters.clamp(1, 20);
+        });
+    }));
+}
+
+#[no_mangle]
 pub extern "C" fn set_body_friction(id: u32, friction: f32) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         with_world_mut(|world| {
