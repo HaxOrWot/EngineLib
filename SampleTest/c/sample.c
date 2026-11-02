@@ -11,7 +11,6 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include "physics_engine.h"
 
 int main(void) {
