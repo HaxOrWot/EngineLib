@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 EngineLib Advanced Features Test Suite (Milestone 2)
 Tests:
