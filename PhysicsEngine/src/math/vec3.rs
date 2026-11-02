@@ -55,6 +55,35 @@ impl Vector3D {
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
+
+    #[inline(always)]
+    pub fn min(self, other: Self) -> Self {
+        Self::new(self.x.min(other.x), self.y.min(other.y), self.z.min(other.z))
+    }
+
+    #[inline(always)]
+    pub fn max(self, other: Self) -> Self {
+        Self::new(self.x.max(other.x), self.y.max(other.y), self.z.max(other.z))
+    }
+
+    #[inline(always)]
+    pub fn clamp(self, min: Self, max: Self) -> Self {
+        Self::new(
+            self.x.clamp(min.x, max.x),
+            self.y.clamp(min.y, max.y),
+            self.z.clamp(min.z, max.z),
+        )
+    }
+
+    #[inline(always)]
+    pub fn distance_squared(self, other: Self) -> f32 {
+        (self - other).length_squared()
+    }
+
+    #[inline(always)]
+    pub fn distance(self, other: Self) -> f32 {
+        (self - other).length()
+    }
 }
 
 impl Add for Vector3D {

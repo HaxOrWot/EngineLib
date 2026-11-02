@@ -47,5 +47,32 @@ impl ContactSolver {
         let impulse = normal * impulse_scalar;
         body_a.velocity += impulse * body_a.inverse_mass;
         body_b.velocity -= impulse * body_b.inverse_mass;
+
+        // 4. Coulomb Tangential Friction Dynamics
+        let updated_rel_vel = body_a.velocity - body_b.velocity;
+        let tangent_vel = updated_rel_vel - normal * updated_rel_vel.dot(normal);
+        let tangent_speed = tangent_vel.length();
+
+        if tangent_speed > 1e-5 {
+            let tangent = tangent_vel * (1.0 / tangent_speed);
+            let friction_coeff = (body_a.friction * body_b.friction).sqrt();
+
+            // Unbounded friction scalar opposing tangent velocity
+            let friction_impulse_ideal = -tangent_speed / total_inv_mass;
+            let max_friction_impulse = friction_coeff * impulse_scalar;
+
+            // Clamp via Coulomb's friction cone: |j_t| <= mu * j_n
+            let friction_impulse_clamped = friction_impulse_ideal.max(-max_friction_impulse);
+
+            let friction_vec = tangent * friction_impulse_clamped;
+            body_a.velocity += friction_vec * body_a.inverse_mass;
+            body_b.velocity -= friction_vec * body_b.inverse_mass;
+        }
+
+        // Wake bodies if impact impulse is significant
+        if impulse_scalar.abs() > 0.1 {
+            body_a.wake();
+            body_b.wake();
+        }
     }
 }

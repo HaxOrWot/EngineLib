@@ -45,6 +45,11 @@ typedef struct {
     float mass;
     float inverse_mass;
     float restitution;
+    float friction;
+    float radius;
+    uint32_t shape_type; // 0 = AABB, 1 = Sphere
+    uint32_t is_sleeping;
+    float sleep_timer;
 } RigidBody3D;
 
 /**
@@ -56,6 +61,16 @@ typedef struct {
 } BodyTransform;
 
 /**
+ * @brief Raycast Hit Result Structure (32 bytes)
+ */
+typedef struct {
+    Vector3D point;
+    Vector3D normal;
+    float distance;
+    uint32_t body_id;
+} RaycastHitFfi;
+
+/**
  * @brief Initializes or resets the global physics world.
  * @param gx Gravity along X axis (m/s^2)
  * @param gy Gravity along Y axis (m/s^2, e.g. -9.81)
@@ -64,7 +79,7 @@ typedef struct {
 PHYSICS_API void init_physics_world(float gx, float gy, float gz);
 
 /**
- * @brief Allocates and inserts a new rigid body.
+ * @brief Allocates and inserts a new AABB rigid body.
  * @param px, py, pz Center position in world coordinates
  * @param sx, sy, sz Bounding box dimensions (width, height, depth)
  * @param mass Mass in kg (0.0 creates a static, immovable object)
@@ -76,6 +91,38 @@ PHYSICS_API uint32_t add_rigid_body(
     float sx, float sy, float sz,
     float mass, float restitution
 );
+
+/**
+ * @brief Allocates and inserts a new spherical rigid body.
+ * @param px, py, pz Center position
+ * @param radius Sphere radius
+ * @param mass Mass in kg
+ * @param restitution Restitution coefficient (0.0 to 1.0)
+ * @param friction Coulomb friction coefficient
+ * @return Unique entity ID (> 0), or 0 on failure
+ */
+PHYSICS_API uint32_t add_sphere_body(
+    float px, float py, float pz,
+    float radius,
+    float mass,
+    float restitution,
+    float friction
+);
+
+/**
+ * @brief Sets the Coulomb friction coefficient of a body.
+ */
+PHYSICS_API void set_body_friction(uint32_t id, float friction);
+
+/**
+ * @brief Checks if a body is currently in an energy-conserving sleep state.
+ */
+PHYSICS_API bool is_body_sleeping(uint32_t id);
+
+/**
+ * @brief Forces a sleeping body awake.
+ */
+PHYSICS_API void wake_body(uint32_t id);
 
 /**
  * @brief Reads the current world position of a body.
@@ -97,6 +144,35 @@ PHYSICS_API void apply_force(uint32_t id, float fx, float fy, float fz);
  * @param dt Timestep in seconds (e.g. 0.016667 for 60 Hz)
  */
 PHYSICS_API void step_physics(float dt);
+
+/**
+ * @brief Casts a ray through the scene and finds the nearest hit.
+ */
+PHYSICS_API bool raycast(
+    float ox, float oy, float oz,
+    float dx, float dy, float dz,
+    float max_dist,
+    RaycastHitFfi* out_hit
+);
+
+/**
+ * @brief Streams all body transforms in a single zero-copy batch call.
+ */
+PHYSICS_API bool sync_all_transforms(
+    BodyTransform* out_buffer,
+    uint32_t buffer_capacity,
+    uint32_t* out_written_count
+);
+
+/**
+ * @brief Removes an individual body from simulation.
+ */
+PHYSICS_API bool remove_rigid_body(uint32_t id);
+
+/**
+ * @brief Tears down the physics world and releases all memory.
+ */
+PHYSICS_API void destroy_physics_world(void);
 
 #ifdef __cplusplus
 }

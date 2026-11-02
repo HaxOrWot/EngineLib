@@ -7,9 +7,11 @@ pub mod ffi;
 
 // Re-export core types for ergonomic Rust usage
 pub use math::vec3::Vector3D;
-pub use core::body::RigidBody3D;
+pub use math::ray::{Ray, RaycastHit};
+pub use core::body::{RigidBody3D, ShapeType};
 pub use core::world::PhysicsWorld;
 pub use dynamics::integrator::Integrator;
+pub use collision::broadphase::SpatialHash;
 pub use collision::narrowphase::{ContactManifold, Narrowphase};
 pub use solver::contact::ContactSolver;
 

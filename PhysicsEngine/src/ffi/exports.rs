@@ -1,7 +1,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 use crate::core::world::PhysicsWorld;
-use crate::ffi::types::BodyTransform;
+use crate::ffi::types::{BodyTransform, RaycastHitFfi};
+use crate::math::ray::Ray;
 use crate::math::vec3::Vector3D;
 
 pub static WORLD: Mutex<Option<PhysicsWorld>> = Mutex::new(None);
@@ -67,6 +68,60 @@ pub extern "C" fn add_rigid_body(
 }
 
 #[no_mangle]
+pub extern "C" fn add_sphere_body(
+    px: f32, py: f32, pz: f32,
+    radius: f32,
+    mass: f32,
+    restitution: f32,
+    friction: f32,
+) -> u32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.add_sphere(
+                Vector3D::new(px, py, pz),
+                radius,
+                mass,
+                restitution,
+                friction,
+            )
+        }).unwrap_or(0)
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_friction(id: u32, friction: f32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.friction = friction.max(0.0);
+            }
+        });
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn is_body_sleeping(id: u32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            world.get_body(id).map(|b| b.is_sleeping == 1).unwrap_or(false)
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn wake_body(id: u32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.wake();
+            }
+        });
+    }));
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn get_body_position(id: u32, out_pos: *mut Vector3D) -> bool {
     if out_pos.is_null() {
         return false;
@@ -121,6 +176,39 @@ pub extern "C" fn destroy_physics_world() {
         };
         *lock = None;
     }));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn raycast(
+    ox: f32, oy: f32, oz: f32,
+    dx: f32, dy: f32, dz: f32,
+    max_dist: f32,
+    out_hit: *mut RaycastHitFfi,
+) -> bool {
+    if out_hit.is_null() {
+        return false;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            let ray = Ray::new(Vector3D::new(ox, oy, oz), Vector3D::new(dx, dy, dz));
+            if let Some(hit) = world.raycast(&ray, max_dist) {
+                std::ptr::write(
+                    out_hit,
+                    RaycastHitFfi {
+                        point: hit.point,
+                        normal: hit.normal,
+                        distance: hit.distance,
+                        body_id: hit.body_id,
+                    },
+                );
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
 }
 
 #[no_mangle]
