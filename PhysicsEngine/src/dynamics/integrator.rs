@@ -60,9 +60,10 @@ impl Integrator {
             body.sleep_timer = 0.0;
         }
 
-        // 5. Advance position & rotation
+        // 5. Advance position & orientation (Quaternion integration without gimbal lock)
         body.position += body.velocity * dt;
-        body.rotation += body.angular_velocity * dt;
+        body.orientation = body.orientation.integrate(body.angular_velocity, dt);
+        body.rotation = body.orientation.to_euler();
 
         // 6. Reset accumulated forces for next frame
         body.acceleration = Vector3D::ZERO;

@@ -16,10 +16,10 @@ impl ContactSolver {
         body_b: &mut RigidBody3D,
         manifold: &ContactManifold,
         dt: f32,
-    ) {
+    ) -> f32 {
         let linear_inv_mass = body_a.inverse_mass + body_b.inverse_mass;
         if linear_inv_mass <= 0.0 {
-            return; // Immovable terrain vs immovable terrain
+            return 0.0; // Immovable terrain vs immovable terrain
         }
 
         let normal = manifold.normal;
@@ -35,11 +35,11 @@ impl ContactSolver {
         }
 
         // 2. Normal & Friction Resolution
-        if let Some(cp2) = manifold.contact_point_2 {
-            Self::resolve_dual_points(body_a, body_b, normal, manifold.contact_point, cp2, effective_penetration, dt);
+        let impulse = if let Some(cp2) = manifold.contact_point_2 {
+            Self::resolve_dual_points(body_a, body_b, normal, manifold.contact_point, cp2, effective_penetration, dt)
         } else {
-            Self::resolve_single_point(body_a, body_b, normal, manifold.contact_point, effective_penetration, dt);
-        }
+            Self::resolve_single_point(body_a, body_b, normal, manifold.contact_point, effective_penetration, dt)
+        };
 
         // 3. Area Contact Rotational Friction Damping for face-face contacts
         if manifold.contact_point_2.is_some() {
@@ -97,6 +97,8 @@ impl ContactSolver {
                 body_b.angular_velocity *= new_ang_speed / ang_speed;
             }
         }
+
+        impulse
     }
 
     #[inline]
@@ -122,10 +124,10 @@ impl ContactSolver {
         p2: Vector3D,
         effective_penetration: f32,
         dt: f32,
-    ) {
+    ) -> f32 {
         let linear_inv_mass = body_a.inverse_mass + body_b.inverse_mass;
         if linear_inv_mass <= 0.0 {
-            return;
+            return 0.0;
         }
 
         let r_a1 = p1 - body_a.position;
@@ -145,7 +147,7 @@ impl ContactSolver {
         let k2 = linear_inv_mass + Self::rot_normal_mass(body_a, r_a2, normal) + Self::rot_normal_mass(body_b, r_b2, normal);
 
         if k1 <= 1e-7 || k2 <= 1e-7 {
-            return;
+            return 0.0;
         }
 
         // Symmetric normal impulse resolution
@@ -154,20 +156,16 @@ impl ContactSolver {
 
         let mut total_impulse_scalar = 0.0;
 
-        if vn_avg < 0.0 || vn_diff.abs() > 1e-4 {
+        if vn_avg < 0.0 {
             let e = if vn1.abs().max(vn2.abs()) < Self::RESTING_VEL_THRESHOLD {
                 0.0
             } else {
                 body_a.restitution.min(body_b.restitution)
             };
 
-            let j_avg = if vn_avg < 0.0 {
-                -(1.0 + e) * vn_avg / ((k1 + k2) * 0.5)
-            } else {
-                0.0
-            };
-
-            let j_diff = -vn_diff / ((k1 + k2) * 0.5);
+            let j_avg = -(1.0 + e) * vn_avg / linear_inv_mass;
+            let rot_k = (Self::rot_normal_mass(body_a, r_a1, normal) + Self::rot_normal_mass(body_b, r_b1, normal)).max(1e-5);
+            let j_diff = (-vn_diff / rot_k).clamp(-j_avg * 0.45, j_avg * 0.45);
 
             let j1 = (j_avg * 0.5 - j_diff).max(0.0);
             let j2 = (j_avg * 0.5 + j_diff).max(0.0);
@@ -206,6 +204,7 @@ impl ContactSolver {
         // Mid-point friction resolution
         let mid_point = (p1 + p2) * 0.5;
         Self::resolve_friction(body_a, body_b, normal, mid_point, total_impulse_scalar, effective_penetration, dt);
+        total_impulse_scalar
     }
 
     fn resolve_single_point(
@@ -215,10 +214,10 @@ impl ContactSolver {
         contact_point: Vector3D,
         effective_penetration: f32,
         dt: f32,
-    ) {
+    ) -> f32 {
         let linear_inv_mass = body_a.inverse_mass + body_b.inverse_mass;
         if linear_inv_mass <= 0.0 {
-            return;
+            return 0.0;
         }
 
         let r_a = contact_point - body_a.position;
@@ -234,7 +233,7 @@ impl ContactSolver {
             + Self::rot_normal_mass(body_b, r_b, normal);
 
         if k_normal <= 1e-7 {
-            return;
+            return 0.0;
         }
 
         let mut impulse_scalar = 0.0;
@@ -275,6 +274,7 @@ impl ContactSolver {
         }
 
         Self::resolve_friction(body_a, body_b, normal, contact_point, impulse_scalar, effective_penetration, dt);
+        impulse_scalar
     }
 
     fn resolve_friction(

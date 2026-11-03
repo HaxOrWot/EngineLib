@@ -8,10 +8,22 @@ use crate::math::vec3::Vector3D;
 use crate::solver::contact::ContactSolver;
 use crate::solver::joint::DistanceJoint;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CollisionEvent {
+    pub body_a: u32,
+    pub body_b: u32,
+    pub contact_point: Vector3D,
+    pub normal: Vector3D,
+    pub impulse: f32,
+    pub is_sensor: u32,
+}
+
 pub struct PhysicsWorld {
     pub bodies: HashMap<u32, RigidBody3D>,
     pub joints: HashMap<u32, DistanceJoint>,
     pub disabled_collision_pairs: HashSet<(u32, u32)>,
+    pub collision_events: Vec<CollisionEvent>,
     pub next_id: u32,
     pub next_joint_id: u32,
     pub gravity: Vector3D,
@@ -26,6 +38,7 @@ impl PhysicsWorld {
             bodies: HashMap::new(),
             joints: HashMap::new(),
             disabled_collision_pairs: HashSet::new(),
+            collision_events: Vec::new(),
             next_id: 1,
             next_joint_id: 1,
             gravity: Vector3D::new(gx, gy, gz),
@@ -54,6 +67,22 @@ impl PhysicsWorld {
         let id = self.next_id;
         self.next_id += 1;
         let body = RigidBody3D::new_sphere(id, pos, radius, mass, restitution, friction);
+        self.bodies.insert(id, body);
+        id
+    }
+
+    pub fn add_capsule(
+        &mut self,
+        pos: Vector3D,
+        radius: f32,
+        height: f32,
+        mass: f32,
+        restitution: f32,
+        friction: f32,
+    ) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let body = RigidBody3D::new_capsule(id, pos, radius, height, mass, restitution, friction);
         self.bodies.insert(id, body);
         id
     }
@@ -137,6 +166,9 @@ impl PhysicsWorld {
         for (id, body) in self.bodies.iter() {
             let hit = if body.shape_type == ShapeType::Sphere as u32 {
                 ray.intersect_sphere(body.position, body.radius, closest_dist)
+            } else if body.shape_type == ShapeType::Capsule as u32 {
+                let (p1, p2) = body.capsule_segment();
+                ray.intersect_capsule(p1, p2, body.radius, closest_dist)
             } else {
                 ray.intersect_aabb(body.position, body.size, closest_dist)
             };
@@ -162,18 +194,73 @@ impl PhysicsWorld {
             return;
         }
 
+        self.collision_events.clear();
+
         let num_substeps = self.substeps.max(1);
         let sub_dt = dt / (num_substeps as f32);
 
+        let mut frame_events: HashMap<(u32, u32), CollisionEvent> = HashMap::new();
+
         for _ in 0..num_substeps {
-            self.step_substep(sub_dt);
+            self.step_substep(sub_dt, &mut frame_events);
         }
+
+        let mut events: Vec<CollisionEvent> = frame_events.into_values().collect();
+        events.sort_by(|a, b| (a.body_a, a.body_b).cmp(&(b.body_a, b.body_b)));
+        self.collision_events = events;
     }
 
-    fn step_substep(&mut self, sub_dt: f32) {
+    fn step_substep(&mut self, sub_dt: f32, frame_events: &mut HashMap<(u32, u32), CollisionEvent>) {
         // Phase 1: Numerical Integration with Air Damping
         for body in self.bodies.values_mut() {
             Integrator::integrate(body, self.gravity, sub_dt);
+        }
+
+        // Phase 1.5: Continuous Collision Detection (CCD) for fast-moving bodies
+        let ccd_ids: Vec<u32> = self
+            .bodies
+            .iter()
+            .filter(|(_, b)| b.enable_ccd == 1 && !b.is_static() && b.velocity.length_squared() > 1.0)
+            .map(|(&id, _)| id)
+            .collect();
+
+        for id in ccd_ids {
+            if let Some(body) = self.bodies.get(&id).copied() {
+                let speed = body.velocity.length();
+                let sweep_dist = speed * sub_dt;
+                if sweep_dist > body.radius * 0.25 {
+                    let ray_dir = body.velocity * (1.0 / speed);
+                    let ray = Ray::new(body.position - ray_dir * sweep_dist, ray_dir);
+                    if let Some(hit) = self.raycast(&ray, sweep_dist + body.radius) {
+                        if hit.body_id != id {
+                            if let Some(b_mut) = self.bodies.get_mut(&id) {
+                                b_mut.position = hit.point + hit.normal * (b_mut.radius + 0.001);
+                                let vn = b_mut.velocity.dot(hit.normal);
+                                let impulse = if vn < 0.0 {
+                                    let imp = -vn * (1.0 + b_mut.restitution) * b_mut.mass;
+                                    b_mut.velocity -= hit.normal * (vn * (1.0 + b_mut.restitution));
+                                    imp
+                                } else {
+                                    0.0
+                                };
+
+                                let key = (id.min(hit.body_id), id.max(hit.body_id));
+                                frame_events
+                                    .entry(key)
+                                    .and_modify(|e| e.impulse += impulse)
+                                    .or_insert(CollisionEvent {
+                                        body_a: id,
+                                        body_b: hit.body_id,
+                                        contact_point: hit.point,
+                                        normal: hit.normal,
+                                        impulse,
+                                        is_sensor: 0,
+                                    });
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Phase 2: Spatial Hash Broadphase
@@ -223,7 +310,25 @@ impl PhysicsWorld {
                     }
 
                     if let Some(manifold) = Narrowphase::test_collision(body_a, body_b) {
-                        ContactSolver::resolve(body_a, body_b, &manifold, sub_dt);
+                        let is_sensor = (body_a.is_sensor == 1 || body_b.is_sensor == 1) as u32;
+                        let impulse = if is_sensor == 0 {
+                            ContactSolver::resolve(body_a, body_b, &manifold, sub_dt)
+                        } else {
+                            0.0
+                        };
+
+                        let key = (*id_a.min(id_b), *id_a.max(id_b));
+                        frame_events
+                            .entry(key)
+                            .and_modify(|e| e.impulse += impulse)
+                            .or_insert(CollisionEvent {
+                                body_a: *id_a,
+                                body_b: *id_b,
+                                contact_point: manifold.contact_point,
+                                normal: manifold.normal,
+                                impulse,
+                                is_sensor,
+                            });
                     }
                 }
             }

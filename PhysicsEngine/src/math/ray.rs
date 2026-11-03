@@ -149,4 +149,63 @@ impl Ray {
             None
         }
     }
+
+    /// Ray-Capsule intersection (capped cylinder with two hemisphere caps)
+    pub fn intersect_capsule(
+        &self,
+        p1: Vector3D,
+        p2: Vector3D,
+        radius: f32,
+        max_dist: f32,
+    ) -> Option<(f32, Vector3D)> {
+        let mut best_t = max_dist;
+        let mut best_normal = None;
+
+        // 1. Check end spheres at p1 and p2
+        if let Some((t1, n1)) = self.intersect_sphere(p1, radius, best_t) {
+            best_t = t1;
+            best_normal = Some(n1);
+        }
+        if let Some((t2, n2)) = self.intersect_sphere(p2, radius, best_t) {
+            best_t = t2;
+            best_normal = Some(n2);
+        }
+
+        // 2. Check cylindrical body
+        let axis = p2 - p1;
+        let axis_len_sq = axis.length_squared();
+        if axis_len_sq > 1e-6 {
+            let axis_dir = axis.normalize();
+            let rc = self.origin - p1;
+            let d_perp = self.direction - axis_dir * self.direction.dot(axis_dir);
+            let rc_perp = rc - axis_dir * rc.dot(axis_dir);
+
+            let a = d_perp.dot(d_perp);
+            let b = d_perp.dot(rc_perp);
+            let c = rc_perp.dot(rc_perp) - radius * radius;
+
+            if a > 1e-6 {
+                let disc = b * b - a * c;
+                if disc >= 0.0 {
+                    let mut t = (-b - disc.sqrt()) / a;
+                    if t < 0.0 {
+                        t = (-b + disc.sqrt()) / a;
+                    }
+                    if t >= 0.0 && t < best_t {
+                        let hit_pos = self.origin + self.direction * t;
+                        let proj = (hit_pos - p1).dot(axis_dir);
+                        let axis_len = axis_len_sq.sqrt();
+                        if proj >= 0.0 && proj <= axis_len {
+                            let center_on_axis = p1 + axis_dir * proj;
+                            let n = (hit_pos - center_on_axis).normalize();
+                            best_t = t;
+                            best_normal = Some(n);
+                        }
+                    }
+                }
+            }
+        }
+
+        best_normal.map(|n| (best_t, n))
+    }
 }

@@ -1,4 +1,8 @@
-use physics_engine::{PhysicsWorld, Ray, Vector3D};
+use physics_engine::{
+    add_capsule_body, add_rigid_body, add_sphere_body, destroy_physics_world,
+    init_physics_world, step_physics, sync_all_transforms_ex, BodyTransformEx,
+    PhysicsWorld, Quaternion, Ray, Vector3D,
+};
 
 #[test]
 fn test_gravitational_freefall() {
@@ -295,5 +299,273 @@ fn test_sliding_friction_deceleration() {
         "Friction failed to decelerate sliding sphere: velocity.x={}",
         b.velocity.x
     );
+}
+
+#[test]
+fn test_capsule_floor_bounce() {
+    let mut world = PhysicsWorld::new(0.0, -9.81, 0.0);
+
+    // Immovable Floor at Y = 0 (top surface at Y = 0.5)
+    world.add_body(
+        Vector3D::new(0.0, 0.0, 0.0),
+        Vector3D::new(20.0, 1.0, 20.0),
+        0.0,
+        0.7,
+    );
+
+    // Upright capsule dropped from Y = 6.0: radius = 0.5, height = 2.0
+    let capsule_id = world.add_capsule(
+        Vector3D::new(0.0, 6.0, 0.0),
+        0.5,
+        2.0,
+        5.0,
+        0.7,
+        0.3,
+    );
+
+    let dt = 1.0 / 60.0;
+    let mut bounced = false;
+    let mut min_y = 6.0;
+
+    for _ in 0..120 {
+        world.step(dt);
+        let b = world.get_body(capsule_id).unwrap();
+        if b.position.y < min_y {
+            min_y = b.position.y;
+        } else if b.position.y > min_y + 0.1 && min_y < 3.0 {
+            bounced = true;
+            break;
+        }
+    }
+
+    assert!(bounced, "Capsule failed to rebound from floor; min_y={}", min_y);
+}
+
+#[test]
+fn test_capsule_capsule_collision() {
+    let mut world = PhysicsWorld::new(0.0, 0.0, 0.0); // Zero-G
+
+    // Capsule A at (-3, 0, 0) moving right at +5 m/s
+    let cap_a = world.add_capsule(
+        Vector3D::new(-3.0, 0.0, 0.0),
+        0.5,
+        2.0,
+        2.0,
+        0.8,
+        0.2,
+    );
+    world.get_body_mut(cap_a).unwrap().velocity = Vector3D::new(5.0, 0.0, 0.0);
+
+    // Capsule B at (+3, 0, 0) moving left at -5 m/s
+    let cap_b = world.add_capsule(
+        Vector3D::new(3.0, 0.0, 0.0),
+        0.5,
+        2.0,
+        2.0,
+        0.8,
+        0.2,
+    );
+    world.get_body_mut(cap_b).unwrap().velocity = Vector3D::new(-5.0, 0.0, 0.0);
+
+    let dt = 1.0 / 60.0;
+    let mut rebounded = false;
+
+    for _ in 0..60 {
+        world.step(dt);
+        let va = world.get_body(cap_a).unwrap().velocity.x;
+        let vb = world.get_body(cap_b).unwrap().velocity.x;
+        if va < 0.0 && vb > 0.0 {
+            rebounded = true;
+            break;
+        }
+    }
+
+    assert!(rebounded, "Capsules failed to collide and rebound from each other");
+}
+
+#[test]
+fn test_ccd_anti_tunneling() {
+    let mut world = PhysicsWorld::new(0.0, 0.0, 0.0);
+
+    // Thin immovable barrier at Z = 5.0 (thickness 0.2: min Z = 4.9, max Z = 5.1)
+    world.add_body(
+        Vector3D::new(0.0, 0.0, 5.0),
+        Vector3D::new(20.0, 20.0, 0.2),
+        0.0,
+        0.5,
+    );
+
+    // High-speed projectile at Z = 0.0 traveling at 250 m/s along +Z
+    let bullet = world.add_sphere(
+        Vector3D::new(0.0, 0.0, 0.0),
+        0.1,
+        0.5,
+        0.5,
+        0.0,
+    );
+    world.get_body_mut(bullet).unwrap().velocity = Vector3D::new(0.0, 0.0, 250.0);
+    world.get_body_mut(bullet).unwrap().enable_ccd = 1; // CCD active
+
+    let dt = 1.0 / 60.0;
+    for _ in 0..10 {
+        world.step(dt);
+    }
+
+    let b = world.get_body(bullet).unwrap();
+    // Projectile must be stopped/rebounded before or at the barrier face (Z <= 5.1)
+    assert!(
+        b.position.z <= 5.1,
+        "Tunneling detected! Bullet tunneled through thin barrier to Z={}",
+        b.position.z
+    );
+    assert!(
+        b.velocity.z <= 0.0,
+        "Bullet did not rebound from barrier: velocity.z={}",
+        b.velocity.z
+    );
+}
+
+#[test]
+fn test_sensor_trigger_detection() {
+    let mut world = PhysicsWorld::new(0.0, 0.0, 0.0);
+
+    // Trigger volume at (0, 0, 5) with is_sensor = 1
+    let trigger_id = world.add_body(
+        Vector3D::new(0.0, 0.0, 5.0),
+        Vector3D::new(4.0, 4.0, 4.0),
+        0.0,
+        0.0,
+    );
+    world.get_body_mut(trigger_id).unwrap().is_sensor = 1;
+
+    // Moving sphere passes right through the trigger at 10 m/s
+    let mover_id = world.add_sphere(
+        Vector3D::new(0.0, 0.0, 0.0),
+        0.5,
+        1.0,
+        0.0,
+        0.0,
+    );
+    world.get_body_mut(mover_id).unwrap().velocity = Vector3D::new(0.0, 0.0, 10.0);
+
+    let mut event_detected = false;
+    let dt = 1.0 / 60.0;
+
+    for _ in 0..60 {
+        world.step(dt);
+        for ev in &world.collision_events {
+            if (ev.body_a == mover_id && ev.body_b == trigger_id)
+                || (ev.body_a == trigger_id && ev.body_b == mover_id)
+            {
+                event_detected = true;
+                assert_eq!(ev.is_sensor, 1, "Event should be marked as sensor trigger");
+                assert_eq!(ev.impulse, 0.0, "Sensor must not impart physical impulse");
+            }
+        }
+    }
+
+    assert!(event_detected, "Trigger zone failed to detect passing body");
+
+    // Ensure mover passed completely through without being slowed down
+    let final_pos = world.get_body(mover_id).unwrap().position;
+    assert!(
+        final_pos.z > 8.0,
+        "Body was impeded by sensor: final_z={}, expected > 8.0",
+        final_pos.z
+    );
+}
+
+#[test]
+fn test_quaternion_rotational_dynamics() {
+    let mut world = PhysicsWorld::new(0.0, 0.0, 0.0);
+
+    let id = world.add_body(
+        Vector3D::ZERO,
+        Vector3D::new(1.0, 1.0, 1.0),
+        1.0,
+        0.5,
+    );
+
+    // Apply high angular velocity around an arbitrary 3D axis
+    let ang_vel = Vector3D::new(10.0, 20.0, 15.0);
+    world.get_body_mut(id).unwrap().angular_velocity = ang_vel;
+
+    let dt = 1.0 / 60.0;
+    for _ in 0..120 {
+        world.step(dt);
+        let b = world.get_body(id).unwrap();
+        // Quaternion must preserve exact unit length (drift-free)
+        let q_len = b.orientation.length();
+        assert!(
+            (q_len - 1.0).abs() < 1e-4,
+            "Quaternion normalization drifted: length={}",
+            q_len
+        );
+    }
+}
+
+#[test]
+fn test_batch_transforms_ex_ffi() {
+    init_physics_world(0.0, -9.81, 0.0);
+
+    let id1 = add_rigid_body(0.0, 10.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.5);
+    let id2 = add_sphere_body(5.0, 20.0, 0.0, 0.5, 2.0, 0.5, 0.3);
+    let id3 = add_capsule_body(10.0, 15.0, 0.0, 0.5, 2.0, 3.0, 0.5, 0.3);
+
+    step_physics(1.0 / 60.0);
+
+    let mut buffer = [BodyTransformEx {
+        id: 0,
+        position: Vector3D::ZERO,
+        orientation: Quaternion::IDENTITY,
+    }; 16];
+    let mut written_count = 0u32;
+
+    let success = unsafe {
+        sync_all_transforms_ex(buffer.as_mut_ptr(), 16, &mut written_count)
+    };
+
+    assert!(success);
+    assert_eq!(written_count, 3);
+
+    let ids: Vec<u32> = (0..written_count as usize).map(|i| buffer[i].id).collect();
+    assert!(ids.contains(&id1));
+    assert!(ids.contains(&id2));
+    assert!(ids.contains(&id3));
+
+    // Verify orientations are normalized
+    for i in 0..written_count as usize {
+        let q = buffer[i].orientation;
+        assert!((q.length() - 1.0).abs() < 1e-4);
+    }
+
+    destroy_physics_world();
+}
+
+#[test]
+fn test_collision_event_telemetry() {
+    let mut world = PhysicsWorld::new(0.0, 0.0, 0.0);
+
+    let a = world.add_sphere(Vector3D::new(-2.0, 0.0, 0.0), 1.0, 2.0, 1.0, 0.0);
+    let b = world.add_sphere(Vector3D::new(2.0, 0.0, 0.0), 1.0, 2.0, 1.0, 0.0);
+
+    world.get_body_mut(a).unwrap().velocity = Vector3D::new(10.0, 0.0, 0.0);
+    world.get_body_mut(b).unwrap().velocity = Vector3D::new(-10.0, 0.0, 0.0);
+
+    let mut event_found = false;
+    for _ in 0..30 {
+        world.step(1.0 / 60.0);
+        if !world.collision_events.is_empty() {
+            let ev = &world.collision_events[0];
+            assert!(ev.body_a == a || ev.body_b == a);
+            assert!(ev.body_a == b || ev.body_b == b);
+            assert!(ev.impulse > 0.0, "Impulse should be positive: {}", ev.impulse);
+            assert!((ev.contact_point.x.abs()) < 0.5, "Contact point near origin");
+            event_found = true;
+            break;
+        }
+    }
+
+    assert!(event_found, "Collision event was not recorded");
 }
 

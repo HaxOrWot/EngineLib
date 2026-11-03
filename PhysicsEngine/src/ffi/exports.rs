@@ -1,7 +1,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
-use crate::core::world::PhysicsWorld;
-use crate::ffi::types::{BodyTransform, RaycastHitFfi};
+use crate::core::world::{CollisionEvent, PhysicsWorld};
+use crate::ffi::types::{BodyTransform, BodyTransformEx, RaycastHitFfi};
+use crate::math::quat::Quaternion;
 use crate::math::ray::Ray;
 use crate::math::vec3::Vector3D;
 
@@ -80,6 +81,30 @@ pub extern "C" fn add_sphere_body(
             world.add_sphere(
                 Vector3D::new(px, py, pz),
                 radius,
+                mass,
+                restitution,
+                friction,
+            )
+        }).unwrap_or(0)
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn add_capsule_body(
+    px: f32, py: f32, pz: f32,
+    radius: f32,
+    height: f32,
+    mass: f32,
+    restitution: f32,
+    friction: f32,
+) -> u32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.add_capsule(
+                Vector3D::new(px, py, pz),
+                radius,
+                height,
                 mass,
                 restitution,
                 friction,
@@ -185,6 +210,56 @@ pub extern "C" fn wake_body(id: u32) {
 }
 
 #[no_mangle]
+pub extern "C" fn set_body_sensor(id: u32, is_sensor: u32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.is_sensor = if is_sensor != 0 { 1 } else { 0 };
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn is_body_sensor(id: u32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            world.get_body(id).map(|b| b.is_sensor == 1).unwrap_or(false)
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_ccd(id: u32, enable_ccd: u32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                body.enable_ccd = if enable_ccd != 0 { 1 } else { 0 };
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn is_body_ccd(id: u32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            world.get_body(id).map(|b| b.enable_ccd == 1).unwrap_or(false)
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn get_body_position(id: u32, out_pos: *mut Vector3D) -> bool {
     if out_pos.is_null() {
         return false;
@@ -260,6 +335,43 @@ pub extern "C" fn set_body_rotation(id: u32, rx: f32, ry: f32, rz: f32) -> bool 
         with_world_mut(|world| {
             if let Some(body) = world.get_body_mut(id) {
                 body.rotation = Vector3D::new(rx, ry, rz);
+                body.orientation = Quaternion::from_euler(rx, ry, rz);
+                body.wake();
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn get_body_orientation(id: u32, out_quat: *mut Quaternion) -> bool {
+    if out_quat.is_null() {
+        return false;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            if let Some(body) = world.get_body(id) {
+                std::ptr::write(out_quat, body.orientation);
+                true
+            } else {
+                false
+            }
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn set_body_orientation(id: u32, qx: f32, qy: f32, qz: f32, qw: f32) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            if let Some(body) = world.get_body_mut(id) {
+                let q = Quaternion::new(qx, qy, qz, qw).normalized();
+                body.orientation = q;
+                body.rotation = q.to_euler();
                 body.wake();
                 true
             } else {
@@ -464,5 +576,108 @@ pub extern "C" fn enable_collision_pair(body_a: u32, body_b: u32) {
             world.enable_collision_pair(body_a, body_b);
         });
     }));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sync_all_transforms_ex(
+    out_buffer: *mut BodyTransformEx,
+    buffer_capacity: u32,
+    out_written_count: *mut u32,
+) -> bool {
+    if out_buffer.is_null() || out_written_count.is_null() {
+        return false;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            let mut count = 0u32;
+            let capacity = buffer_capacity as usize;
+
+            for (id, body) in world.bodies.iter() {
+                if (count as usize) >= capacity {
+                    break;
+                }
+                let dest = out_buffer.add(count as usize);
+                std::ptr::write(
+                    dest,
+                    BodyTransformEx {
+                        id: *id,
+                        position: body.position,
+                        orientation: body.orientation,
+                    },
+                );
+                count += 1;
+            }
+
+            std::ptr::write(out_written_count, count);
+            true
+        }).unwrap_or(false)
+    }));
+    result.unwrap_or(false)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn get_collision_events(
+    out_events: *mut CollisionEvent,
+    max_count: u32,
+) -> u32 {
+    if out_events.is_null() || max_count == 0 {
+        return 0;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            let count = world.collision_events.len().min(max_count as usize);
+            for i in 0..count {
+                std::ptr::write(out_events.add(i), world.collision_events[i]);
+            }
+            count as u32
+        }).unwrap_or(0)
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn get_collision_event_count() -> u32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_world(|world| {
+            world.collision_events.len() as u32
+        }).unwrap_or(0)
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn clear_collision_events() {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        with_world_mut(|world| {
+            world.collision_events.clear();
+        });
+    }));
+}
+
+#[no_mangle]
+pub extern "C" fn create_physics_world(gx: f32, gy: f32, gz: f32) -> *mut PhysicsWorld {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        Box::into_raw(Box::new(PhysicsWorld::new(gx, gy, gz)))
+    }));
+    result.unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn destroy_physics_world_instance(world: *mut PhysicsWorld) {
+    if !world.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(Box::from_raw(world));
+        }));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn step_physics_world(world: *mut PhysicsWorld, dt: f32) {
+    if !world.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            (*world).step(dt);
+        }));
+    }
 }
 

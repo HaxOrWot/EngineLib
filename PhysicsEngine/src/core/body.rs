@@ -1,3 +1,4 @@
+use crate::math::quat::Quaternion;
 use crate::math::vec3::Vector3D;
 
 #[repr(u32)]
@@ -5,6 +6,7 @@ use crate::math::vec3::Vector3D;
 pub enum ShapeType {
     AABB = 0,
     Sphere = 1,
+    Capsule = 2,
 }
 
 #[repr(C)]
@@ -14,7 +16,8 @@ pub struct RigidBody3D {
     pub position: Vector3D,
     pub velocity: Vector3D,
     pub acceleration: Vector3D,
-    pub rotation: Vector3D,
+    pub rotation: Vector3D, // Euler angles for legacy / C-ABI compatibility
+    pub orientation: Quaternion, // Full 3D unit quaternion orientation
     pub angular_velocity: Vector3D,
     pub torque: Vector3D,
     pub inv_inertia: Vector3D,
@@ -24,8 +27,11 @@ pub struct RigidBody3D {
     pub restitution: f32,
     pub friction: f32,
     pub radius: f32,
+    pub height: f32,       // Cylinder segment height for Capsule
     pub shape_type: u32,
-    pub is_sleeping: u32, // 0 = active, 1 = sleeping
+    pub is_sleeping: u32,  // 0 = active, 1 = sleeping
+    pub is_sensor: u32,    // 0 = physical collider, 1 = trigger/sensor (no contact force)
+    pub enable_ccd: u32,   // 0 = discrete, 1 = continuous collision detection
     pub sleep_timer: f32,
     pub linear_damping: f32,
     pub angular_damping: f32,
@@ -57,6 +63,7 @@ impl RigidBody3D {
             velocity: Vector3D::ZERO,
             acceleration: Vector3D::ZERO,
             rotation: Vector3D::ZERO,
+            orientation: Quaternion::IDENTITY,
             angular_velocity: Vector3D::ZERO,
             torque: Vector3D::ZERO,
             inv_inertia,
@@ -66,8 +73,11 @@ impl RigidBody3D {
             restitution: clamped_restitution,
             friction: 0.5,
             radius,
+            height: 0.0,
             shape_type: ShapeType::AABB as u32,
             is_sleeping: 0,
+            is_sensor: 0,
+            enable_ccd: 0,
             sleep_timer: 0.0,
             linear_damping: 0.0,
             angular_damping: 0.15,
@@ -102,6 +112,7 @@ impl RigidBody3D {
             velocity: Vector3D::ZERO,
             acceleration: Vector3D::ZERO,
             rotation: Vector3D::ZERO,
+            orientation: Quaternion::IDENTITY,
             angular_velocity: Vector3D::ZERO,
             torque: Vector3D::ZERO,
             inv_inertia,
@@ -111,8 +122,67 @@ impl RigidBody3D {
             restitution: clamped_restitution,
             friction: clamped_friction,
             radius,
+            height: 0.0,
             shape_type: ShapeType::Sphere as u32,
             is_sleeping: 0,
+            is_sensor: 0,
+            enable_ccd: 0,
+            sleep_timer: 0.0,
+            linear_damping: 0.0,
+            angular_damping: 0.15,
+        }
+    }
+
+    pub fn new_capsule(
+        id: u32,
+        position: Vector3D,
+        radius: f32,
+        height: f32,
+        mass: f32,
+        restitution: f32,
+        friction: f32,
+    ) -> Self {
+        let inv_mass = if mass > 0.0001 { 1.0 / mass } else { 0.0 };
+        let clamped_restitution = restitution.clamp(0.0, 1.0);
+        let clamped_friction = friction.max(0.0);
+
+        // Approximate cylinder inertia: I_y = 1/2 m r^2; I_x = I_z = m * (1/12 h^2 + 1/4 r^2)
+        let inv_inertia = if inv_mass > 0.0 {
+            let iy = 0.5 * mass * radius * radius;
+            let ixz = mass * ((1.0 / 12.0) * height * height + 0.25 * radius * radius);
+            Vector3D::new(
+                if ixz > 1e-5 { 1.0 / ixz } else { 0.0 },
+                if iy > 1e-5 { 1.0 / iy } else { 0.0 },
+                if ixz > 1e-5 { 1.0 / ixz } else { 0.0 },
+            )
+        } else {
+            Vector3D::ZERO
+        };
+
+        let total_h = height + radius * 2.0;
+        let diam = radius * 2.0;
+
+        Self {
+            id,
+            position,
+            velocity: Vector3D::ZERO,
+            acceleration: Vector3D::ZERO,
+            rotation: Vector3D::ZERO,
+            orientation: Quaternion::IDENTITY,
+            angular_velocity: Vector3D::ZERO,
+            torque: Vector3D::ZERO,
+            inv_inertia,
+            size: Vector3D::new(diam, total_h, diam),
+            mass,
+            inverse_mass: inv_mass,
+            restitution: clamped_restitution,
+            friction: clamped_friction,
+            radius,
+            height,
+            shape_type: ShapeType::Capsule as u32,
+            is_sleeping: 0,
+            is_sensor: 0,
+            enable_ccd: 0,
             sleep_timer: 0.0,
             linear_damping: 0.0,
             angular_damping: 0.15,
@@ -161,9 +231,31 @@ impl RigidBody3D {
         }
     }
 
+    /// Endpoints of the capsule line segment in world space
+    #[inline]
+    pub fn capsule_segment(&self) -> (Vector3D, Vector3D) {
+        let up = self.orientation.rotate_vector(Vector3D::UP);
+        let half_h = self.height * 0.5;
+        (self.position - up * half_h, self.position + up * half_h)
+    }
+
     #[inline(always)]
     pub fn aabb_bounds(&self) -> (Vector3D, Vector3D) {
-        let half = self.size * 0.5;
-        (self.position - half, self.position + half)
+        if self.shape_type == ShapeType::Capsule as u32 {
+            let (p1, p2) = self.capsule_segment();
+            let min_x = p1.x.min(p2.x) - self.radius;
+            let min_y = p1.y.min(p2.y) - self.radius;
+            let min_z = p1.z.min(p2.z) - self.radius;
+            let max_x = p1.x.max(p2.x) + self.radius;
+            let max_y = p1.y.max(p2.y) + self.radius;
+            let max_z = p1.z.max(p2.z) + self.radius;
+            (
+                Vector3D::new(min_x, min_y, min_z),
+                Vector3D::new(max_x, max_y, max_z),
+            )
+        } else {
+            let half = self.size * 0.5;
+            (self.position - half, self.position + half)
+        }
     }
 }
